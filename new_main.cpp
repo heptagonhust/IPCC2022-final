@@ -11,6 +11,7 @@
 #include <stack>
 #include <string>
 #include <sys/time.h>
+#include <unordered_set>
 #include <vector>
 
 using namespace std;
@@ -164,6 +165,7 @@ vector<int> tarjan_lca(const vector<vector<int>> &tree,
   vector<bool> vis(node_cnt + 1);
   vector<vector<int>> query_indices(node_cnt + 1);
   weigthed_depth.resize(node_cnt + 1);
+  unweighted_depth.resize(node_cnt + 1);
   for (int i = 0; i < query_info.size(); ++i) {
     auto &e = query_info[i];
     query_indices[e.a].push_back(i);
@@ -182,6 +184,75 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<int> &lca,
     e.weight *= depth[e.a] + depth[e.b] - 2 * depth[lca[i]];
   }
   sort(edges.begin(), edges.end());
+}
+
+vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
+                                const vector<Edge> &tree_edges,
+                                const vector<Edge> &off_tree_edges,
+                                const vector<int> &lca,
+                                const vector<int> &depth) {
+  ScopeTimer __t("add_off_tree_edges");
+  vector<Edge> edges_to_be_add;
+  struct UnweightedEdge {
+    int u, v;
+    bool operator==(const UnweightedEdge &rhs) const {
+      return u == rhs.u && v == rhs.v;
+    }
+  };
+  struct UnweightedEdgeHash {
+    size_t operator()(const UnweightedEdge &other) const {
+      return hash<int>()(other.u) ^ hash<int>()(other.v);
+    }
+  };
+  unordered_set<UnweightedEdge, UnweightedEdgeHash> blacklist;
+  unordered_set<UnweightedEdge, UnweightedEdgeHash> edge_set;
+  for (auto &i : off_tree_edges) {
+    edge_set.insert(UnweightedEdge{i.a, i.b});
+  }
+  for (int i = 0; i < off_tree_edges.size(); ++i) {
+    if (edges_to_be_add.size() == max(int(2 * off_tree_edges.size() / 25), 2)) {
+      break;
+    }
+    auto &e = off_tree_edges[i];
+    if (blacklist.count({e.a, e.b}) == 0 && blacklist.count({e.b, e.a}) == 0) {
+      edges_to_be_add.push_back(e);
+      int beta = depth[lca[i]] - min(depth[e.a], depth[e.b]);
+      struct QueueEntry {
+        int node, layer;
+      };
+      auto beta_layer_bfs = [&tree, &tree_edges, beta](
+                                queue<QueueEntry> q, vector<int> &black_list) {
+        while (!q.empty()) {
+          int cur_node = q.front().node;
+          int cur_layer = q.front().layer;
+          q.pop();
+          for (int j = 0; j < tree[j].size(); ++j) {
+            Edge e = tree_edges[tree[cur_node][j]];
+            if (e.b == cur_node) {
+              swap(e.a, e.b);
+            }
+            if (cur_layer + 1 < beta) {
+              black_list.push_back(e.b);
+              q.push({e.b, cur_layer + 1});
+            }
+          }
+        }
+      };
+      queue<QueueEntry> q1, q2;
+      q1.push({e.a, 0}), q2.push({e.b, 0});
+      vector<int> black_list1, black_list2;
+      beta_layer_bfs(q1, black_list1);
+      beta_layer_bfs(q2, black_list2);
+      for (auto u : black_list1) {
+        for (auto v : black_list2) {
+          if (edge_set.count({u, v}) || edge_set.count({v, u})) {
+            blacklist.insert({u, v});
+          }
+        }
+      }
+    }
+  }
+  return edges_to_be_add;
 }
 
 int main(int argc, const char *argv[]) {
@@ -250,6 +321,8 @@ int main(int argc, const char *argv[]) {
   vector<int> lca = tarjan_lca(new_tree, tree_edges, off_tree_edges, r_node, M,
                                tree_weighted_depth, tree_unweighted_depth);
   sort_off_tree_edges(off_tree_edges, lca, tree_weighted_depth);
+  vector<Edge> res = add_off_tree_edges(new_tree, tree_edges, off_tree_edges,
+                                        lca, tree_unweighted_depth);
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +
                                      (end.tv_usec - start.tv_usec) / 1000.0);
