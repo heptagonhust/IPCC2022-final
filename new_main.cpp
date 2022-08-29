@@ -1,9 +1,3 @@
-#include "Eigen/Core"
-#include "Eigen/LU"
-#include "Eigen/SparseCholesky"
-#include "Eigen/SparseCore"
-#include "Eigen/src/Core/Matrix.h"
-#include "Eigen/src/Core/util/Constants.h"
 #include "timer.hpp"
 #include <algorithm>
 #include <cstddef>
@@ -20,7 +14,6 @@
 #include <vector>
 
 using namespace std;
-using namespace Eigen;
 struct Edge {
   int a, b;
   double weight;
@@ -116,6 +109,64 @@ void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
   }
 }
 
+vector<vector<int>> rebuild_tree(int node_cnt, const vector<Edge> &tree) {
+  ScopeTimer __t("rebuild_tree");
+  vector<vector<int>> res(node_cnt + 1);
+  for (int i = 0; i < tree.size(); ++i) {
+    auto &e = tree[i];
+    res[e.a].push_back(i);
+    res[e.b].push_back(i);
+  }
+  return res;
+}
+
+void tarjan_lca_impl(const vector<vector<int>> &tree,
+                     const vector<Edge> &tree_edges,
+                     const vector<vector<int>> &query_indices,
+                     const vector<Edge> &query_info, int cur, vector<int> &lca,
+                     UnionFindSet &ufs, vector<bool> &vis) {
+  ufs.fa[cur] = cur;
+  vis[cur] = 1;
+  for (int i = 0; i < tree[cur].size(); ++i) {
+    Edge e = tree_edges[tree[cur][i]];
+    if (e.b == cur) {
+      swap(e.a, e.b);
+    }
+    if (!vis[e.b]) {
+      tarjan_lca_impl(tree, tree_edges, query_indices, query_info, e.b, lca,
+                      ufs, vis);
+      ufs.fa[e.b] = cur;
+    }
+  }
+  for (int i = 0; i < query_indices[cur].size(); ++i) {
+    Edge e = query_info[query_indices[cur][i]];
+    if (e.b == cur) {
+      swap(e.a, e.b);
+    }
+    if (vis[e.b]) {
+      lca[i] = ufs.find_fa(e.b);
+    }
+  }
+}
+
+vector<int> tarjan_lca(const vector<vector<int>> &tree,
+                       const vector<Edge> &tree_edges,
+                       const vector<Edge> &query_info, int root, int node_cnt) {
+  ScopeTimer __t("tarjan_lca");
+  vector<int> res(query_info.size());
+  UnionFindSet ufs(node_cnt + 1);
+  vector<bool> vis(node_cnt + 1);
+  vector<vector<int>> query_indices(node_cnt + 1);
+  for (int i = 0; i < query_info.size(); ++i) {
+    auto &e = query_info[i];
+    query_indices[e.a].push_back(i);
+    query_indices[e.b].push_back(i);
+  }
+  tarjan_lca_impl(tree, tree_edges, query_indices, query_info, root, res, ufs,
+                  vis);
+  return res;
+}
+
 int main(int argc, const char *argv[]) {
   // read input file
   const char *file = "byn1.mtx";
@@ -176,6 +227,8 @@ int main(int argc, const char *argv[]) {
   auto new_edges = get_new_edges(origin_edges, degree, unweighted_distance);
   vector<Edge> tree_edges, off_tree_edges;
   kruskal(M, new_edges, tree_edges, off_tree_edges);
+  auto new_tree = rebuild_tree(M, tree_edges);
+  vector<int> lca = tarjan_lca(new_tree, tree_edges, off_tree_edges, r_node, M);
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +
                                      (end.tv_usec - start.tv_usec) / 1000.0);
