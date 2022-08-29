@@ -125,7 +125,8 @@ void tarjan_lca_impl(const vector<vector<int>> &tree,
                      const vector<vector<int>> &query_indices,
                      const vector<Edge> &query_info, int cur, vector<int> &lca,
                      UnionFindSet &ufs, vector<bool> &vis,
-                     vector<double> &depth) {
+                     vector<double> &weighted_depth,
+                     vector<int> &unweighted_depth) {
   ufs.fa[cur] = cur;
   vis[cur] = 1;
   for (int i = 0; i < tree[cur].size(); ++i) {
@@ -134,9 +135,10 @@ void tarjan_lca_impl(const vector<vector<int>> &tree,
       swap(e.a, e.b);
     }
     if (!vis[e.b]) {
-      depth[e.b] += e.weight;
+      weighted_depth[e.b] = e.weight + weighted_depth[e.a];
+      unweighted_depth[e.b] = 1 + unweighted_depth[e.a];
       tarjan_lca_impl(tree, tree_edges, query_indices, query_info, e.b, lca,
-                      ufs, vis, depth);
+                      ufs, vis, weighted_depth, unweighted_depth);
       ufs.fa[e.b] = cur;
     }
   }
@@ -154,20 +156,21 @@ void tarjan_lca_impl(const vector<vector<int>> &tree,
 vector<int> tarjan_lca(const vector<vector<int>> &tree,
                        const vector<Edge> &tree_edges,
                        const vector<Edge> &query_info, int root, int node_cnt,
-                       vector<double> &depth) {
+                       vector<double> &weigthed_depth,
+                       vector<int> &unweighted_depth) {
   ScopeTimer __t("tarjan_lca");
   vector<int> res(query_info.size());
   UnionFindSet ufs(node_cnt + 1);
   vector<bool> vis(node_cnt + 1);
   vector<vector<int>> query_indices(node_cnt + 1);
-  depth.resize(node_cnt + 1);
+  weigthed_depth.resize(node_cnt + 1);
   for (int i = 0; i < query_info.size(); ++i) {
     auto &e = query_info[i];
     query_indices[e.a].push_back(i);
     query_indices[e.b].push_back(i);
   }
   tarjan_lca_impl(tree, tree_edges, query_indices, query_info, root, res, ufs,
-                  vis, depth);
+                  vis, weigthed_depth, unweighted_depth);
   return res;
 }
 
@@ -243,8 +246,9 @@ int main(int argc, const char *argv[]) {
   kruskal(M, new_edges, tree_edges, off_tree_edges);
   auto new_tree = rebuild_tree(M, tree_edges);
   vector<double> tree_weighted_depth;
+  vector<int> tree_unweighted_depth;
   vector<int> lca = tarjan_lca(new_tree, tree_edges, off_tree_edges, r_node, M,
-                               tree_weighted_depth);
+                               tree_weighted_depth, tree_unweighted_depth);
   sort_off_tree_edges(off_tree_edges, lca, tree_weighted_depth);
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +
