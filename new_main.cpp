@@ -72,7 +72,7 @@ struct UnionFindSet {
     if (fa[x] == x) // 如果 x 是祖先则返回
       return x;
     else
-      return find_fa(fa[x]); // 如果不是则 x 的爸爸问 x 的爷爷
+      return fa[x] = find_fa(fa[x]); // 如果不是则 x 的爸爸问 x 的爷爷
   }
 
   void merge(int a, int b) { fa[a] = fa[b]; }
