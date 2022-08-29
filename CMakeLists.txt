@@ -8,7 +8,7 @@ add_link_options(-fsanitize=address)
 
 
 add_executable(sparsify main.cpp)
-add_executable(ng-sparsify new_main.cpp)
+add_executable(ng-sparsify new_main.cpp timer.hpp)
 
 # find_package(OpenMP REQUIRED)
 # find_package(MPI REQUIRED)
