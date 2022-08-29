@@ -68,14 +68,14 @@ struct UnionFindSet {
     }
   }
   int find_fa(int x) {
-    while (x != fa[x]) // 如果 x 不是祖先，就一直往上一辈找
-    {
-      x = fa[x];
-    }
-    return fa[x] = x; // 如果 x 是祖先则返回
+    // 寻找x的祖先
+    if (fa[x] == x) // 如果 x 是祖先则返回
+      return x;
+    else
+      return find_fa(fa[x]); // 如果不是则 x 的爸爸问 x 的爷爷
   }
 
-  void merge(int a, int b) { fa[a] = b; }
+  void merge(int a, int b) { fa[a] = fa[b]; }
 };
 
 void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
