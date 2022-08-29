@@ -146,7 +146,7 @@ void tarjan_lca_impl(const vector<vector<int>> &tree,
       swap(e.a, e.b);
     }
     if (vis[e.b]) {
-      lca[i] = ufs.find_fa(e.b);
+      lca[query_indices[cur][i]] = ufs.find_fa(e.b);
     }
   }
 }
