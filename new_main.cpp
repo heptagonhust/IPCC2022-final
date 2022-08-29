@@ -171,6 +171,16 @@ vector<int> tarjan_lca(const vector<vector<int>> &tree,
   return res;
 }
 
+void sort_off_tree_edges(vector<Edge> &edges, const vector<int> &lca,
+                         const vector<double> &depth) {
+  ScopeTimer __t("sort_off_tree_edges");
+  for (int i = 0; i < edges.size(); ++i) {
+    auto &e = edges[i];
+    e.weight *= depth[e.a] + depth[e.b] - 2 * depth[lca[i]];
+  }
+  sort(edges.begin(), edges.end());
+}
+
 int main(int argc, const char *argv[]) {
   // read input file
   const char *file = "byn1.mtx";
@@ -235,6 +245,7 @@ int main(int argc, const char *argv[]) {
   vector<double> tree_weighted_depth;
   vector<int> lca = tarjan_lca(new_tree, tree_edges, off_tree_edges, r_node, M,
                                tree_weighted_depth);
+  sort_off_tree_edges(off_tree_edges, lca, tree_weighted_depth);
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +
                                      (end.tv_usec - start.tv_usec) / 1000.0);
