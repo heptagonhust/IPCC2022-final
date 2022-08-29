@@ -116,34 +116,6 @@ void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
   }
 }
 
-MatrixXd get_laplace_pseduo_inverse(int node_cnt,
-                                    const vector<Edge> &tree_edges,
-                                    const vector<double> &volume) {
-  ScopeTimer __t("get_laplace_pseduo_inverse");
-  SparseMatrix<double> laplace(node_cnt, node_cnt);
-  for (int i = 0; i < tree_edges.size(); ++i) {
-    auto &e = tree_edges[i];
-    laplace.insert(e.a - 1, e.b - 1) = -e.weight;
-    laplace.insert(e.b - 1, e.a - 1) = -e.weight;
-    // cout << -e.weight << endl;
-  }
-  for (int i = 1; i <= node_cnt; ++i) {
-    laplace.insert(i - 1, i - 1) = volume[i];
-    // cout << volume[i] << endl;
-  }
-  laplace.makeCompressed();
-  SimplicialLLT<SparseMatrix<double>> solver;
-  solver.analyzePattern(laplace);
-  solver.factorize(laplace);
-  auto info = solver.info();
-  if (info != Eigen::Success) {
-    exit(-1);
-  }
-  MatrixXd L = solver.matrixL().triangularView<Eigen::Lower>().solve(
-      MatrixXd::Identity(node_cnt, node_cnt));
-  return L.transpose() * L;
-}
-
 int main(int argc, const char *argv[]) {
   // read input file
   const char *file = "byn1.mtx";
@@ -204,7 +176,6 @@ int main(int argc, const char *argv[]) {
   auto new_edges = get_new_edges(origin_edges, degree, unweighted_distance);
   vector<Edge> tree_edges, off_tree_edges;
   kruskal(M, new_edges, tree_edges, off_tree_edges);
-  MatrixXd pseudo_inverse_L = get_laplace_pseduo_inverse(M, tree_edges, volume);
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +
                                      (end.tv_usec - start.tv_usec) / 1000.0);
