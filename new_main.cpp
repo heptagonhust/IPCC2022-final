@@ -19,7 +19,7 @@ using namespace std;
 #define DEBUG
 struct Edge {
   int a, b;
-  double weight;
+  double weight, origin_weight;
   bool operator<(const Edge &rhs) const { return this->weight > rhs.weight; }
 };
 
@@ -64,6 +64,7 @@ vector<Edge> get_new_edges(const vector<Edge> &edges, const vector<int> &deg,
   for (int i = 0; i < edges.size(); ++i) {
     res[i].a = edges[i].a;
     res[i].b = edges[i].b;
+    res[i].origin_weight = edges[i].origin_weight;
     res[i].weight =
         edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
         (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
@@ -108,7 +109,7 @@ void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
   int off_tree_edges_cur = off_tree_edges.size();
   off_tree_edges.resize(off_tree_edges.size() + edges.size() - edge_cnt);
   for (int i = edge_cnt, j = off_tree_edges_cur; i < edges.size(); ++i, ++j) {
-    off_tree_edges[j] = edges[j];
+    off_tree_edges[j] = edges[i];
   }
 }
 
@@ -138,7 +139,7 @@ void tarjan_lca_impl(const vector<vector<int>> &tree,
       swap(e.a, e.b);
     }
     if (!vis[e.b]) {
-      weighted_depth[e.b] = e.weight + weighted_depth[e.a];
+      weighted_depth[e.b] = e.origin_weight + weighted_depth[e.a];
       unweighted_depth[e.b] = 1 + unweighted_depth[e.a];
       tarjan_lca_impl(tree, tree_edges, query_indices, query_info, e.b, lca,
                       ufs, vis, weighted_depth, unweighted_depth);
@@ -183,9 +184,9 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<int> &lca,
   ScopeTimer __t("sort_off_tree_edges");
   for (int i = 0; i < edges.size(); ++i) {
     auto &e = edges[i];
-    e.weight *= depth[e.a] + depth[e.b] - 2 * depth[lca[i]];
+    e.weight = depth[e.a] + depth[e.b] - 2 * depth[lca[i]];
   }
-  sort(edges.begin(), edges.end());
+  stable_sort(edges.begin(), edges.end());
 }
 
 vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
@@ -294,7 +295,7 @@ int main(int argc, const char *argv[]) {
     volume[t] += w;
     degree[f]++;
     degree[t]++;
-    origin_edges.push_back(Edge{f, t, w});
+    origin_edges.push_back(Edge{f, t, w, w});
   }
   fin.close();
   printf("edge_cnt: %ld\n", origin_edges.size());
@@ -315,6 +316,10 @@ int main(int argc, const char *argv[]) {
   for (auto &x : tree_edges) {
     printf("%d %d\n", x.a, x.b);
   }
+  puts("unsorted_off_tree_edges");
+  for (auto &x : off_tree_edges) {
+    printf("%d %d\n", x.a, x.b);
+  }
 #endif
 
   auto new_tree = rebuild_tree(M, tree_edges);
@@ -327,7 +332,7 @@ int main(int argc, const char *argv[]) {
 #ifdef DEBUG
   puts("sorted off_tree_edges: ");
   for (auto &x : off_tree_edges) {
-    printf("%d %d %lf\n", x.a, x.b, x.weight);
+    printf("%d %d %.16lf\n", x.a, x.b, x.weight);
   }
 #endif
 
