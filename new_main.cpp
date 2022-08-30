@@ -34,6 +34,7 @@ vector<int> get_unweighted_distance_bfs(const vector<Edge> &edges,
   ScopeTimer __t("get_unweighted_distance_bfs");
   vector<int> res(G.size());
   vector<bool> vis(G.size());
+  vis[start] = 1;
   queue<int> q;
   q.push(start);
   int cnt = 0;
@@ -66,6 +67,7 @@ vector<Edge> get_new_edges(const vector<Edge> &edges, const vector<int> &deg,
     res[i].weight =
         edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
         (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
+    printf("(%d, %d): %lf\n", res[i].a, res[i].b, res[i].weight);
   }
   return res;
 }
@@ -314,6 +316,9 @@ int main(int argc, const char *argv[]) {
   int r_node = largest_volume_node(volume);
   auto unweighted_distance =
       get_unweighted_distance_bfs(origin_edges, G, r_node);
+  for (int i = 1; i <= M; ++i) {
+    printf("%d: V: %lf, deg: %d, dis: %d\n", i, volume[i], degree[i], unweighted_distance[i]);
+  }
   auto new_edges = get_new_edges(origin_edges, degree, unweighted_distance);
   vector<Edge> tree_edges, off_tree_edges;
   kruskal(M, new_edges, tree_edges, off_tree_edges);

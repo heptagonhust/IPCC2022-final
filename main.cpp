@@ -131,7 +131,9 @@ int main(int argc, const char * argv[]) {
     no_weight_distance[largest_volume_point]=0;
     //free the memory
     queue<int>().swap(process);
-
+    for (int i = 1; i <= M; ++i) {
+        printf("%d: V: %lf, deg: %lf, dis: %d\n", i, volume[i], degree[i], no_weight_distance[i]);
+    }
     //construct the edge-weight matrix
     vector<double> edge;
     vector<vector<double>> edge_matrix;//to run the krascal
@@ -153,6 +155,7 @@ int main(int argc, const char * argv[]) {
             edge.push_back(g);
             edge.push_back(d);
             edge_matrix.push_back(edge);
+            printf("(%lf, %lf): %lf\n", triple2[i][j][ROW], triple2[i][j][COLUMN], g);
             edge.erase(edge.begin(),edge.end());
         }
     }
