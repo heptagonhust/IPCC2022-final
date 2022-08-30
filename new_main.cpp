@@ -80,20 +80,18 @@ struct UnionFindSet {
     }
   }
   int find_fa(int x) {
-    // 寻找x的祖先
-    if (fa[x] == x) // 如果 x 是祖先则返回
-      return x;
-    else
-      return fa[x] = find_fa(fa[x]); // 如果不是则 x 的爸爸问 x 的爷爷
+    if (x != fa[x]) // x 不是自身的父亲，即 x 不是该集合的代表
+      fa[x] = find_fa(fa[x]); // 查找 x 的祖先直到找到代表，于是顺手路径压缩
+    return fa[x];
   }
 
-  void merge(int a, int b) { fa[a] = fa[b]; }
+  void merge(int a, int b) { fa[fa[a]] = fa[b]; }
 };
 
 void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
              vector<Edge> &off_tree_edges) {
   ScopeTimer __t("kruskal");
-  sort(edges.begin(), edges.end());
+  stable_sort(edges.begin(), edges.end());
   tree_edges.reserve(node_cnt - 1);
   off_tree_edges.reserve(edges.size() - (node_cnt - 1));
   UnionFindSet ufs(node_cnt + 1);
@@ -287,15 +285,7 @@ int main(int argc, const char *argv[]) {
     int f, t;
     double w;
     fin >> f >> t >> w;
-    bool exists = false;
-    for (int j = 0; j < G[f].size(); ++j) {
-      auto &e = origin_edges[G[f][j]];
-      if ((e.a == f && e.b == t) || (e.a == t && e.b == f)) {
-        exists = true;
-        break;
-      }
-    }
-    if (exists) {
+    if (f > t) {
       continue;
     }
     G[f].push_back(origin_edges.size());
@@ -316,10 +306,6 @@ int main(int argc, const char *argv[]) {
   int r_node = largest_volume_node(volume);
   auto unweighted_distance =
       get_unweighted_distance_bfs(origin_edges, G, r_node);
-  for (int i = 1; i <= M; ++i) {
-    printf("%d: V: %lf, deg: %d, dis: %d\n", i, volume[i], degree[i],
-           unweighted_distance[i]);
-  }
   auto new_edges = get_new_edges(origin_edges, degree, unweighted_distance);
   vector<Edge> tree_edges, off_tree_edges;
   kruskal(M, new_edges, tree_edges, off_tree_edges);

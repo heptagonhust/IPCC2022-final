@@ -158,7 +158,6 @@ int main(int argc, const char *argv[]) {
       edge.push_back(g);
       edge.push_back(d);
       edge_matrix.push_back(edge);
-      printf("(%lf, %lf): %lf\n", triple2[i][j][ROW], triple2[i][j][COLUMN], g);
       edge.erase(edge.begin(), edge.end());
     }
   }
