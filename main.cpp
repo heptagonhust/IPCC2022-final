@@ -248,7 +248,7 @@ int main(int argc, const char * argv[]) {
 #ifdef DEBUG
     puts("sorted off_tree_edges: ");
     for (auto &x:copy_off_tree_edge) {
-      printf("%d %d\n", int(x[0]), int(x[1]));
+      printf("%d %d %lf\n", int(x[0]), int(x[1]), x[2]);
     }
 #endif
 

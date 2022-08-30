@@ -64,7 +64,7 @@ vector<Edge> get_new_edges(const vector<Edge> &edges, const vector<int> &deg,
     res[i].a = edges[i].a;
     res[i].b = edges[i].b;
     res[i].weight =
-        log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
+        edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
         (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
   }
   return res;
@@ -335,7 +335,7 @@ int main(int argc, const char *argv[]) {
 #ifdef DEBUG
   puts("sorted off_tree_edges: ");
   for (auto &x : off_tree_edges) {
-    printf("%d %d\n", x.a, x.b);
+    printf("%d %d %lf\n", x.a, x.b, x.weight);
   }
 #endif
 
