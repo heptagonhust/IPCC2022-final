@@ -21,6 +21,8 @@
 using namespace Eigen;
 using namespace std;
 
+#define DEBUG
+
 bool compare(const vector<double> &a,const vector<double> &b){
     return a[2]>b[2];
 }
@@ -185,6 +187,13 @@ int main(int argc, const char * argv[]) {
         }
     }
 
+#ifdef DEBUG
+    puts("kruscal results: ");
+    for (auto &x : spanning_tree) {
+      printf("%d %d\n", int(x[0]), int(x[1]));
+    }
+#endif
+
     //construct the off-tree edge
     vector<vector<double>> off_tree_edge;
     int inside=0;//To show which trees are in the spanning tree
@@ -235,6 +244,13 @@ int main(int argc, const char * argv[]) {
     //sort by effect resistance
     vector<vector<double>>().swap(off_tree_edge);
     stable_sort(copy_off_tree_edge.begin(), copy_off_tree_edge.end(), compare);
+
+#ifdef DEBUG
+    puts("sorted off_tree_edges: ");
+    for (auto &x:copy_off_tree_edge) {
+      printf("%d %d\n", int(x[0]), int(x[1]));
+    }
+#endif
 
     for (int i=0; i<M; i++) { if(i>30){break;}
         for (int j=0; j<N; j++) { if(j>30){break;}

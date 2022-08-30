@@ -15,6 +15,8 @@
 #include <vector>
 
 using namespace std;
+
+#define DEBUG
 struct Edge {
   int a, b;
   double weight;
@@ -315,12 +317,28 @@ int main(int argc, const char *argv[]) {
   auto new_edges = get_new_edges(origin_edges, degree, unweighted_distance);
   vector<Edge> tree_edges, off_tree_edges;
   kruskal(M, new_edges, tree_edges, off_tree_edges);
+
+#ifdef DEBUG
+  puts("kruscal results: ");
+  for (auto &x : tree_edges) {
+    printf("%d %d\n", x.a, x.b);
+  }
+#endif
+
   auto new_tree = rebuild_tree(M, tree_edges);
   vector<double> tree_weighted_depth;
   vector<int> tree_unweighted_depth;
   vector<int> lca = tarjan_lca(new_tree, tree_edges, off_tree_edges, r_node, M,
                                tree_weighted_depth, tree_unweighted_depth);
   sort_off_tree_edges(off_tree_edges, lca, tree_weighted_depth);
+
+#ifdef DEBUG
+  puts("sorted off_tree_edges: ");
+  for (auto &x : off_tree_edges) {
+    printf("%d %d\n", x.a, x.b);
+  }
+#endif
+
   vector<Edge> res = add_off_tree_edges(new_tree, tree_edges, off_tree_edges,
                                         lca, tree_unweighted_depth);
   gettimeofday(&end, NULL);
@@ -329,4 +347,12 @@ int main(int argc, const char *argv[]) {
   /**************************************************/
   /******************* End timing *******************/
   /**************************************************/
+  FILE *out = fopen("result.txt", "w");
+  for (int i = 0; i < tree_edges.size(); i++) {
+    fprintf(out, "%d %d\n", int(tree_edges[i].a), int(tree_edges[i].b));
+  }
+  for (int i = 0; i < res.size(); i++) {
+    fprintf(out, "%d %d\n", int(res[i].a), int(res[i].b));
+  }
+  fclose(out);
 }
