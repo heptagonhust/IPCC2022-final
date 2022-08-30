@@ -317,7 +317,8 @@ int main(int argc, const char *argv[]) {
   auto unweighted_distance =
       get_unweighted_distance_bfs(origin_edges, G, r_node);
   for (int i = 1; i <= M; ++i) {
-    printf("%d: V: %lf, deg: %d, dis: %d\n", i, volume[i], degree[i], unweighted_distance[i]);
+    printf("%d: V: %lf, deg: %d, dis: %d\n", i, volume[i], degree[i],
+           unweighted_distance[i]);
   }
   auto new_edges = get_new_edges(origin_edges, degree, unweighted_distance);
   vector<Edge> tree_edges, off_tree_edges;
