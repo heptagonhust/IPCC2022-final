@@ -139,7 +139,7 @@ void tarjan_lca_impl(const vector<vector<int>> &tree,
       swap(e.a, e.b);
     }
     if (!vis[e.b]) {
-      weighted_depth[e.b] = e.origin_weight + weighted_depth[e.a];
+      weighted_depth[e.b] = 1.0 / e.origin_weight + weighted_depth[e.a];
       unweighted_depth[e.b] = 1 + unweighted_depth[e.a];
       tarjan_lca_impl(tree, tree_edges, query_indices, query_info, e.b, lca,
                       ufs, vis, weighted_depth, unweighted_depth);
@@ -184,7 +184,7 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<int> &lca,
   ScopeTimer __t("sort_off_tree_edges");
   for (int i = 0; i < edges.size(); ++i) {
     auto &e = edges[i];
-    e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
+    e.weight = depth[e.a] + depth[e.b] - 2 * depth[e.lca];
   }
 #ifdef DEBUG
   puts("unsorted_off_tree_edges");
