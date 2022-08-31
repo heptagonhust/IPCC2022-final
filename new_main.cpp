@@ -20,6 +20,7 @@ using namespace std;
 struct Edge {
   int a, b;
   double weight, origin_weight;
+  int lca;
   bool operator<(const Edge &rhs) const { return this->weight > rhs.weight; }
 };
 
@@ -127,7 +128,7 @@ vector<vector<int>> rebuild_tree(int node_cnt, const vector<Edge> &tree) {
 void tarjan_lca_impl(const vector<vector<int>> &tree,
                      const vector<Edge> &tree_edges,
                      const vector<vector<int>> &query_indices,
-                     const vector<Edge> &query_info, int cur, vector<int> &lca,
+                     vector<Edge> &query_info, int cur, vector<int> &lca,
                      UnionFindSet &ufs, vector<bool> &vis,
                      vector<double> &weighted_depth,
                      vector<int> &unweighted_depth) {
@@ -147,19 +148,19 @@ void tarjan_lca_impl(const vector<vector<int>> &tree,
     }
   }
   for (int i = 0; i < query_indices[cur].size(); ++i) {
-    Edge e = query_info[query_indices[cur][i]];
+    Edge &e = query_info[query_indices[cur][i]];
     if (e.b == cur) {
       swap(e.a, e.b);
     }
     if (vis[e.b]) {
-      lca[query_indices[cur][i]] = ufs.find_fa(e.b);
+      e.lca = ufs.find_fa(e.b);
     }
   }
 }
 
 vector<int> tarjan_lca(const vector<vector<int>> &tree,
                        const vector<Edge> &tree_edges,
-                       const vector<Edge> &query_info, int root, int node_cnt,
+                       vector<Edge> &query_info, int root, int node_cnt,
                        vector<double> &weigthed_depth,
                        vector<int> &unweighted_depth) {
   ScopeTimer __t("tarjan_lca");
@@ -167,8 +168,8 @@ vector<int> tarjan_lca(const vector<vector<int>> &tree,
   UnionFindSet ufs(node_cnt + 1);
   vector<bool> vis(node_cnt + 1);
   vector<vector<int>> query_indices(node_cnt + 1);
-  weigthed_depth.resize(node_cnt + 1);
-  unweighted_depth.resize(node_cnt + 1);
+  weigthed_depth.resize(node_cnt + 1, 0);
+  unweighted_depth.resize(node_cnt + 1, 0);
   for (int i = 0; i < query_info.size(); ++i) {
     auto &e = query_info[i];
     query_indices[e.a].push_back(i);
@@ -184,7 +185,7 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<int> &lca,
   ScopeTimer __t("sort_off_tree_edges");
   for (int i = 0; i < edges.size(); ++i) {
     auto &e = edges[i];
-    e.weight = depth[e.a] + depth[e.b] - 2 * depth[lca[i]];
+    e.weight = depth[e.a] + depth[e.b] - 2 * depth[e.lca];
   }
   stable_sort(edges.begin(), edges.end());
 }
@@ -219,22 +220,27 @@ vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
     auto &e = off_tree_edges[i];
     if (blacklist.count({e.a, e.b}) == 0 && blacklist.count({e.b, e.a}) == 0) {
       edges_to_be_add.push_back(e);
-      int beta = depth[lca[i]] - min(depth[e.a], depth[e.b]);
+      int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
+      printf("%d\n", beta);
       struct QueueEntry {
         int node, layer;
       };
-      auto beta_layer_bfs = [&tree, &tree_edges, beta](
-                                queue<QueueEntry> q, vector<int> &black_list) {
+      auto beta_layer_bfs = [&tree, &tree_edges,
+                             beta](int start, queue<QueueEntry> q,
+                                   vector<int> &black_list) {
+        vector<bool> vis(tree.size(), false);
+        vis[start] = true;
         while (!q.empty()) {
           int cur_node = q.front().node;
           int cur_layer = q.front().layer;
           q.pop();
-          for (int j = 0; j < tree[j].size(); ++j) {
+          for (int j = 0; j < tree[cur_node].size(); ++j) {
             Edge e = tree_edges[tree[cur_node][j]];
             if (e.b == cur_node) {
               swap(e.a, e.b);
             }
-            if (cur_layer + 1 < beta) {
+            if (!vis[e.b] && cur_layer + 1 < beta) {
+              vis[e.b] = true;
               black_list.push_back(e.b);
               q.push({e.b, cur_layer + 1});
             }
@@ -244,8 +250,8 @@ vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
       queue<QueueEntry> q1, q2;
       q1.push({e.a, 0}), q2.push({e.b, 0});
       vector<int> black_list1, black_list2;
-      beta_layer_bfs(q1, black_list1);
-      beta_layer_bfs(q2, black_list2);
+      beta_layer_bfs(e.a, q1, black_list1);
+      beta_layer_bfs(e.b, q2, black_list2);
       for (auto u : black_list1) {
         for (auto v : black_list2) {
           if (edge_set.count({u, v}) || edge_set.count({v, u})) {

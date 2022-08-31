@@ -23,19 +23,26 @@ using namespace std;
 
 #define DEBUG
 
+const double eps = 1e-8;
+
 bool compare(const vector<double> &a, const vector<double> &b) {
-  return a[2] > b[2];
+  return a[2] - b[2] > eps;
 }
 
 int main(int argc, const char *argv[]) {
   // read input file
   const char *file = "byn1.mtx";
-  if (argc > 2) {
-    printf("Usage : ./main <filename>");
+  const char *output = "result.txt";
+  if (argc > 3) {
+    printf("Usage : ./main <filename> <output_file>");
     exit(0);
   } else if (argc == 2) {
     file = argv[1];
+  } else if (argc == 3) {
+    file = argv[1];
+    output = argv[2];
   }
+
   // the matrix you read must be a adjacency matrix
   ifstream fin(file);
   int M, N, L;
@@ -203,7 +210,7 @@ int main(int argc, const char *argv[]) {
 #ifdef DEBUG
   puts("kruscal results: ");
   for (auto &x : spanning_tree) {
-    printf("%d %d\n", int(x[0]), int(x[1]));
+    printf("%d %d %.6lf\n", int(x[0]), int(x[1]), x[3]);
   }
 #endif
 
@@ -260,9 +267,9 @@ int main(int argc, const char *argv[]) {
     edge.erase(edge.begin(), edge.end());
   }
 #ifdef DEBUG
-  puts("unsorted_off_tree_edges");
+  fputs("unsorted_off_tree_edges", stderr);
   for (auto &x : copy_off_tree_edge) {
-    printf("%d %d\n", int(x[0]), int(x[1]));
+    fprintf(stderr, "%d %d %.16lf\n", int(x[0]), int(x[1]), x[2]);
   }
 #endif
 
@@ -271,9 +278,9 @@ int main(int argc, const char *argv[]) {
   stable_sort(copy_off_tree_edge.begin(), copy_off_tree_edge.end(), compare);
 
 #ifdef DEBUG
-  puts("sorted off_tree_edges: ");
+  fputs("sorted off_tree_edges: ", stderr);
   for (auto &x : copy_off_tree_edge) {
-    printf("%d %d %.16lf\n", int(x[0]), int(x[1]), x[2]);
+    fprintf(stderr, "%d %d %.16lf\n", int(x[0]), int(x[1]), x[2]);
   }
 #endif
 
@@ -470,7 +477,9 @@ int main(int argc, const char *argv[]) {
   /******************* End timing *******************/
   /**************************************************/
 
-  FILE *out = fopen("result.txt", "w");
+
+  
+  FILE *out = fopen(output, "w");
   for (int i = 0; i < spanning_tree.size(); i++) {
     fprintf(out, "%d %d\n", int(spanning_tree[i][0]), int(spanning_tree[i][1]));
   }
