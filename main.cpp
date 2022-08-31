@@ -382,7 +382,7 @@ int main(int argc, const char *argv[]) {
       // compare between two nodes to get the lower one to limit the upper bound
       // of bfs
       int belta = d1 >= d2 ? d2 : d1;
-
+      printf("beta: %d, (%d, %d)\n", belta, int(copy_off_tree_edge[i][0]), int(copy_off_tree_edge[i][1]));
       // choose two nodes as root node respectively to run belta bfs
       vector<int> bfs_process1;
       bfs_process1.push_back(copy_off_tree_edge[i][0]);

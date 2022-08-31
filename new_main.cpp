@@ -147,12 +147,12 @@ void tarjan_lca_impl(const vector<vector<int>> &tree,
     }
   }
   for (int i = 0; i < query_indices[cur].size(); ++i) {
-    Edge &e = query_info[query_indices[cur][i]];
+    Edge e = query_info[query_indices[cur][i]];
     if (e.b == cur) {
       swap(e.a, e.b);
     }
     if (vis[e.b]) {
-      e.lca = ufs.find_fa(e.b);
+      query_info[query_indices[cur][i]].lca = ufs.find_fa(e.b);
     }
   }
 }
@@ -220,6 +220,9 @@ vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
     if (blacklist.count({e.a, e.b}) == 0) {
       edges_to_be_add.push_back(e);
       int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
+#ifdef DEBUG
+      printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
+#endif
       struct QueueEntry {
         int node, layer;
       };
@@ -238,7 +241,7 @@ vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
             if (e.b == cur_node) {
               swap(e.a, e.b);
             }
-            if (!vis[e.b] && cur_layer + 1 < beta) {
+            if (!vis[e.b] && cur_layer + 1 <= beta) {
               vis[e.b] = true;
               black_list.push_back(e.b);
               q.push({e.b, cur_layer + 1});
