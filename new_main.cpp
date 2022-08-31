@@ -69,7 +69,6 @@ vector<Edge> get_new_edges(const vector<Edge> &edges, const vector<int> &deg,
     res[i].weight =
         edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
         (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
-    printf("(%d, %d): %lf\n", res[i].a, res[i].b, res[i].weight);
   }
   return res;
 }
@@ -200,7 +199,7 @@ vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
   struct UnweightedEdge {
     int u, v;
     bool operator==(const UnweightedEdge &rhs) const {
-      return u == rhs.u && v == rhs.v;
+      return (u == rhs.u && v == rhs.v) || (u == rhs.v && v == rhs.u);
     }
   };
   struct UnweightedEdgeHash {
@@ -218,10 +217,9 @@ vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
       break;
     }
     auto &e = off_tree_edges[i];
-    if (blacklist.count({e.a, e.b}) == 0 && blacklist.count({e.b, e.a}) == 0) {
+    if (blacklist.count({e.a, e.b}) == 0) {
       edges_to_be_add.push_back(e);
       int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
-      printf("%d\n", beta);
       struct QueueEntry {
         int node, layer;
       };
@@ -230,6 +228,7 @@ vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
                                    vector<int> &black_list) {
         vector<bool> vis(tree.size(), false);
         vis[start] = true;
+        black_list.push_back(start);
         while (!q.empty()) {
           int cur_node = q.front().node;
           int cur_layer = q.front().layer;
@@ -254,7 +253,7 @@ vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
       beta_layer_bfs(e.b, q2, black_list2);
       for (auto u : black_list1) {
         for (auto v : black_list2) {
-          if (edge_set.count({u, v}) || edge_set.count({v, u})) {
+          if (edge_set.count({u, v})) {
             blacklist.insert({u, v});
           }
         }
