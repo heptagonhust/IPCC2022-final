@@ -214,7 +214,7 @@ vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
     edge_set.insert(UnweightedEdge{i.a, i.b});
   }
   for (int i = 0; i < off_tree_edges.size(); ++i) {
-    if (edges_to_be_add.size() == max(int(2 * off_tree_edges.size() / 25), 2)) {
+    if (edges_to_be_add.size() == max(int(off_tree_edges.size() / 25), 2)) {
       break;
     }
     auto &e = off_tree_edges[i];
