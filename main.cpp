@@ -267,9 +267,9 @@ int main(int argc, const char *argv[]) {
     edge.erase(edge.begin(), edge.end());
   }
 #ifdef DEBUG
-  fputs("unsorted_off_tree_edges", stderr);
+  puts("unsorted_off_tree_edges");
   for (auto &x : copy_off_tree_edge) {
-    fprintf(stderr, "%d %d %.16lf\n", int(x[0]), int(x[1]), x[2]);
+    printf("%d %d %.16lf\n", int(x[0]), int(x[1]), x[2]);
   }
 #endif
 
@@ -278,9 +278,9 @@ int main(int argc, const char *argv[]) {
   stable_sort(copy_off_tree_edge.begin(), copy_off_tree_edge.end(), compare);
 
 #ifdef DEBUG
-  fputs("sorted off_tree_edges: ", stderr);
+  puts("sorted off_tree_edges: ");
   for (auto &x : copy_off_tree_edge) {
-    fprintf(stderr, "%d %d %.16lf\n", int(x[0]), int(x[1]), x[2]);
+    printf("%d %d %.16lf\n", int(x[0]), int(x[1]), x[2]);
   }
 #endif
 
