@@ -184,8 +184,14 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<int> &lca,
   ScopeTimer __t("sort_off_tree_edges");
   for (int i = 0; i < edges.size(); ++i) {
     auto &e = edges[i];
-    e.weight = depth[e.a] + depth[e.b] - 2 * depth[e.lca];
+    e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
   }
+#ifdef DEBUG
+  puts("unsorted_off_tree_edges");
+  for (auto &x : edges) {
+    printf("%d %d %lf %lf\n", x.a, x.b, x.weight, x.origin_weight);
+  }
+#endif
   stable_sort(edges.begin(), edges.end());
 }
 
@@ -322,11 +328,7 @@ int main(int argc, const char *argv[]) {
 #ifdef DEBUG
   puts("kruscal results: ");
   for (auto &x : tree_edges) {
-    printf("%d %d\n", x.a, x.b);
-  }
-  puts("unsorted_off_tree_edges");
-  for (auto &x : off_tree_edges) {
-    printf("%d %d\n", x.a, x.b);
+    printf("%d %d %lf %lf\n", x.a, x.b, x.weight, x.origin_weight);
   }
 #endif
 
@@ -340,7 +342,7 @@ int main(int argc, const char *argv[]) {
 #ifdef DEBUG
   puts("sorted off_tree_edges: ");
   for (auto &x : off_tree_edges) {
-    printf("%d %d %.16lf\n", x.a, x.b, x.weight);
+    printf("%d %d %.16lf %.16lf\n", x.a, x.b, x.weight, x.origin_weight);
   }
 #endif
 
@@ -352,7 +354,7 @@ int main(int argc, const char *argv[]) {
   /**************************************************/
   /******************* End timing *******************/
   /**************************************************/
-  FILE *out = fopen("result.txt", "w");
+  FILE *out = fopen("result.ng.txt", "w");
   for (int i = 0; i < tree_edges.size(); i++) {
     fprintf(out, "%d %d\n", int(tree_edges[i].a), int(tree_edges[i].b));
   }
