@@ -99,3 +99,5 @@ build
 .cache
 result.txt
 result.ng.txt
+*.svg
+perf.data*
