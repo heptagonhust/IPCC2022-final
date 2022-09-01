@@ -16,7 +16,7 @@
 
 using namespace std;
 
-#define DEBUG
+// #define DEBUG
 struct Edge {
   int a, b;
   double weight, origin_weight;
@@ -195,12 +195,19 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<int> &lca,
   stable_sort(edges.begin(), edges.end());
 }
 
-vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
+vector<Edge> add_off_tree_edges(const int node_cnt,
+                                const vector<vector<int>> &tree,
                                 const vector<Edge> &tree_edges,
                                 const vector<Edge> &off_tree_edges,
                                 const vector<int> &lca,
                                 const vector<int> &depth) {
   ScopeTimer __t("add_off_tree_edges");
+  vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
+  for (int i = 0; i < off_tree_edges.size(); ++i) {
+    auto &e = off_tree_edges[i];
+    rebuilt_off_tree_graph[e.a].push_back(i);
+    rebuilt_off_tree_graph[e.b].push_back(i);
+  }
   vector<Edge> edges_to_be_add;
   struct UnweightedEdge {
     int u, v;
@@ -214,10 +221,6 @@ vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
     }
   };
   unordered_set<UnweightedEdge, UnweightedEdgeHash> blacklist;
-  unordered_set<UnweightedEdge, UnweightedEdgeHash> edge_set;
-  for (auto &i : off_tree_edges) {
-    edge_set.insert(UnweightedEdge{i.a, i.b});
-  }
   for (int i = 0; i < off_tree_edges.size(); ++i) {
     if (edges_to_be_add.size() == max(int(off_tree_edges.size() / 25), 2)) {
       break;
@@ -232,9 +235,9 @@ vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
       struct QueueEntry {
         int node, layer;
       };
-      auto beta_layer_bfs = [&tree, &tree_edges,
-                             beta](int start, queue<QueueEntry> q,
-                                   vector<int> &black_list) {
+      auto beta_layer_bfs_1 = [&tree, &tree_edges,
+                               beta](int start, queue<QueueEntry> q,
+                                     vector<int> &black_list) {
         vector<bool> vis(tree.size(), false);
         vis[start] = true;
         black_list.push_back(start);
@@ -255,15 +258,43 @@ vector<Edge> add_off_tree_edges(const vector<vector<int>> &tree,
           }
         }
       };
+      auto beta_layer_bfs_2 = [&tree, &tree_edges,
+                               beta](int start, queue<QueueEntry> q,
+                                     unordered_set<int> &black_list) {
+        vector<bool> vis(tree.size(), false);
+        vis[start] = true;
+        black_list.insert(start);
+        while (!q.empty()) {
+          int cur_node = q.front().node;
+          int cur_layer = q.front().layer;
+          q.pop();
+          for (int j = 0; j < tree[cur_node].size(); ++j) {
+            Edge e = tree_edges[tree[cur_node][j]];
+            if (e.b == cur_node) {
+              swap(e.a, e.b);
+            }
+            if (!vis[e.b] && cur_layer + 1 <= beta) {
+              vis[e.b] = true;
+              black_list.insert(e.b);
+              q.push({e.b, cur_layer + 1});
+            }
+          }
+        }
+      };
       queue<QueueEntry> q1, q2;
       q1.push({e.a, 0}), q2.push({e.b, 0});
-      vector<int> black_list1, black_list2;
-      beta_layer_bfs(e.a, q1, black_list1);
-      beta_layer_bfs(e.b, q2, black_list2);
+      vector<int> black_list1;
+      unordered_set<int> black_list2;
+      beta_layer_bfs_1(e.a, q1, black_list1);
+      beta_layer_bfs_2(e.b, q2, black_list2);
       for (auto u : black_list1) {
-        for (auto v : black_list2) {
-          if (edge_set.count({u, v})) {
-            blacklist.insert({u, v});
+        for (int j = 0; j < rebuilt_off_tree_graph[u].size(); ++j) {
+          Edge e = off_tree_edges[rebuilt_off_tree_graph[u][j]];
+          if (e.b == u) {
+            swap(e.a, e.b);
+          }
+          if (black_list2.count(e.b) > 0) {
+            blacklist.insert({e.a, e.b});
           }
         }
       }
@@ -346,7 +377,7 @@ int main(int argc, const char *argv[]) {
   }
 #endif
 
-  vector<Edge> res = add_off_tree_edges(new_tree, tree_edges, off_tree_edges,
+  vector<Edge> res = add_off_tree_edges(M, new_tree, tree_edges, off_tree_edges,
                                         lca, tree_unweighted_depth);
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +

@@ -98,3 +98,4 @@ _deps
 build
 .cache
 result.txt
+result.ng.txt
