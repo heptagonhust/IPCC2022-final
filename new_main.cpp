@@ -11,7 +11,7 @@
 #include <stack>
 #include <string>
 #include <sys/time.h>
-#include <unordered_set>
+#include "parallel_hashmap/phmap.h"
 #include <vector>
 
 using namespace std;
@@ -220,7 +220,7 @@ vector<Edge> add_off_tree_edges(const int node_cnt,
       return hash<int>()(other.u) ^ hash<int>()(other.v);
     }
   };
-  unordered_set<UnweightedEdge, UnweightedEdgeHash> blacklist;
+  phmap::flat_hash_set<UnweightedEdge, UnweightedEdgeHash> blacklist;
   for (int i = 0; i < off_tree_edges.size(); ++i) {
     if (edges_to_be_add.size() == max(int(off_tree_edges.size() / 25), 2)) {
       break;
@@ -260,7 +260,7 @@ vector<Edge> add_off_tree_edges(const int node_cnt,
       };
       auto beta_layer_bfs_2 = [&tree, &tree_edges,
                                beta](int start, queue<QueueEntry> q,
-                                     unordered_set<int> &black_list) {
+                                     phmap::flat_hash_set<int> &black_list) {
         vector<bool> vis(tree.size(), false);
         vis[start] = true;
         black_list.insert(start);
@@ -284,7 +284,7 @@ vector<Edge> add_off_tree_edges(const int node_cnt,
       queue<QueueEntry> q1, q2;
       q1.push({e.a, 0}), q2.push({e.b, 0});
       vector<int> black_list1;
-      unordered_set<int> black_list2;
+      phmap::flat_hash_set<int> black_list2;
       beta_layer_bfs_1(e.a, q1, black_list1);
       beta_layer_bfs_2(e.b, q2, black_list2);
       for (auto u : black_list1) {
@@ -293,7 +293,7 @@ vector<Edge> add_off_tree_edges(const int node_cnt,
           if (e.b == u) {
             swap(e.a, e.b);
           }
-          if (black_list2.count(e.b) > 0) {
+          if (rebuilt_off_tree_graph[u][j] > i && black_list2.count(e.b) > 0) {
             blacklist.insert({e.a, e.b});
           }
         }
