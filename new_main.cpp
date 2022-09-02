@@ -44,14 +44,12 @@ vector<int> get_unweighted_distance_bfs(const vector<Edge> &edges,
     int top = q.front();
     q.pop();
     for (int i = 0; i < G[top].size(); ++i) {
-      Edge e = edges[G[top][i]];
-      if (e.b == top) {
-        swap(e.a, e.b);
-      }
-      if (!vis[e.b]) {
-        res[e.b] = res[e.a] + 1;
-        q.push(e.b);
-        vis[e.b] = 1;
+      const Edge &e = edges[G[top][i]];
+      int v = top ^ e.a ^ e.b;
+      if (!vis[v]) {
+        res[v] = res[top] + 1;
+        q.push(v);
+        vis[v] = 1;
       }
     }
   }
@@ -134,25 +132,21 @@ void tarjan_lca_impl(const vector<vector<int>> &tree,
   ufs.fa[cur] = cur;
   vis[cur] = 1;
   for (int i = 0; i < tree[cur].size(); ++i) {
-    Edge e = tree_edges[tree[cur][i]];
-    if (e.b == cur) {
-      swap(e.a, e.b);
-    }
-    if (!vis[e.b]) {
-      weighted_depth[e.b] = 1.0 / e.origin_weight + weighted_depth[e.a];
-      unweighted_depth[e.b] = 1 + unweighted_depth[e.a];
-      tarjan_lca_impl(tree, tree_edges, query_indices, query_info, e.b, lca,
-                      ufs, vis, weighted_depth, unweighted_depth);
-      ufs.fa[e.b] = cur;
+    const Edge &e = tree_edges[tree[cur][i]];
+    int v = cur ^ e.a ^ e.b;
+    if (!vis[v]) {
+      weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
+      unweighted_depth[v] = 1 + unweighted_depth[cur];
+      tarjan_lca_impl(tree, tree_edges, query_indices, query_info, v, lca, ufs,
+                      vis, weighted_depth, unweighted_depth);
+      ufs.fa[v] = cur;
     }
   }
   for (int i = 0; i < query_indices[cur].size(); ++i) {
-    Edge e = query_info[query_indices[cur][i]];
-    if (e.b == cur) {
-      swap(e.a, e.b);
-    }
-    if (vis[e.b]) {
-      query_info[query_indices[cur][i]].lca = ufs.find_fa(e.b);
+    const Edge &e = query_info[query_indices[cur][i]];
+    int v = cur ^ e.a ^ e.b;
+    if (vis[v]) {
+      query_info[query_indices[cur][i]].lca = ufs.find_fa(v);
     }
   }
 }
@@ -246,14 +240,12 @@ vector<Edge> add_off_tree_edges(const int node_cnt,
           int cur_layer = q.front().layer;
           q.pop();
           for (int j = 0; j < tree[cur_node].size(); ++j) {
-            Edge e = tree_edges[tree[cur_node][j]];
-            if (e.b == cur_node) {
-              swap(e.a, e.b);
-            }
-            if (!vis[e.b] && cur_layer + 1 <= beta) {
-              vis[e.b] = true;
-              black_list.push_back(e.b);
-              q.push({e.b, cur_layer + 1});
+            const Edge &e = tree_edges[tree[cur_node][j]];
+            int v = cur_node ^ e.a ^ e.b;
+            if (!vis[v] && cur_layer + 1 <= beta) {
+              vis[v] = true;
+              black_list.push_back(v);
+              q.push({v, cur_layer + 1});
             }
           }
         }
@@ -269,14 +261,12 @@ vector<Edge> add_off_tree_edges(const int node_cnt,
           int cur_layer = q.front().layer;
           q.pop();
           for (int j = 0; j < tree[cur_node].size(); ++j) {
-            Edge e = tree_edges[tree[cur_node][j]];
-            if (e.b == cur_node) {
-              swap(e.a, e.b);
-            }
-            if (!vis[e.b] && cur_layer + 1 <= beta) {
-              vis[e.b] = true;
-              black_list.insert(e.b);
-              q.push({e.b, cur_layer + 1});
+            const Edge &e = tree_edges[tree[cur_node][j]];
+            int v = cur_node ^ e.a ^ e.b;
+            if (!vis[v] && cur_layer + 1 <= beta) {
+              vis[v] = true;
+              black_list.insert(v);
+              q.push({v, cur_layer + 1});
             }
           }
         }
@@ -289,11 +279,9 @@ vector<Edge> add_off_tree_edges(const int node_cnt,
       beta_layer_bfs_2(e.b, q2, black_list2);
       for (auto u : black_list1) {
         for (int j = 0; j < rebuilt_off_tree_graph[u].size(); ++j) {
-          Edge e = off_tree_edges[rebuilt_off_tree_graph[u][j]];
-          if (e.b == u) {
-            swap(e.a, e.b);
-          }
-          if (black_list2.count(e.b) > 0) {
+          const Edge &e = off_tree_edges[rebuilt_off_tree_graph[u][j]];
+          int v = u ^ e.a ^ e.b;
+          if (black_list2.count(v) > 0) {
             ban[rebuilt_off_tree_graph[u][j]] = 1;
           }
         }
