@@ -1,3 +1,4 @@
+#include "parallel_hashmap/phmap.h"
 #include "timer.hpp"
 #include <algorithm>
 #include <cstddef>
@@ -11,7 +12,6 @@
 #include <stack>
 #include <string>
 #include <sys/time.h>
-#include "parallel_hashmap/phmap.h"
 #include <vector>
 
 using namespace std;
@@ -209,6 +209,7 @@ vector<Edge> add_off_tree_edges(const int node_cnt,
     rebuilt_off_tree_graph[e.b].push_back(i);
   }
   vector<Edge> edges_to_be_add;
+  vector<bool> ban(off_tree_edges.size());
   struct UnweightedEdge {
     int u, v;
     bool operator==(const UnweightedEdge &rhs) const {
@@ -220,13 +221,12 @@ vector<Edge> add_off_tree_edges(const int node_cnt,
       return hash<int>()(other.u) ^ hash<int>()(other.v);
     }
   };
-  phmap::flat_hash_set<UnweightedEdge, UnweightedEdgeHash> blacklist;
   for (int i = 0; i < off_tree_edges.size(); ++i) {
     if (edges_to_be_add.size() == max(int(off_tree_edges.size() / 25), 2)) {
       break;
     }
     auto &e = off_tree_edges[i];
-    if (blacklist.count({e.a, e.b}) == 0) {
+    if (ban[i] == 0) {
       edges_to_be_add.push_back(e);
       int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
 #ifdef DEBUG
@@ -293,8 +293,8 @@ vector<Edge> add_off_tree_edges(const int node_cnt,
           if (e.b == u) {
             swap(e.a, e.b);
           }
-          if (rebuilt_off_tree_graph[u][j] > i && black_list2.count(e.b) > 0) {
-            blacklist.insert({e.a, e.b});
+          if (black_list2.count(e.b) > 0) {
+            ban[rebuilt_off_tree_graph[u][j]] = 1;
           }
         }
       }
