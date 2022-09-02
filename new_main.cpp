@@ -189,12 +189,12 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<int> &lca,
   stable_sort(edges.begin(), edges.end());
 }
 
-vector<Edge> add_off_tree_edges(const int node_cnt,
-                                const vector<vector<int>> &tree,
-                                const vector<Edge> &tree_edges,
-                                const vector<Edge> &off_tree_edges,
-                                const vector<int> &lca,
-                                const vector<int> &depth) {
+vector<int> add_off_tree_edges(const int node_cnt,
+                               const vector<vector<int>> &tree,
+                               const vector<Edge> &tree_edges,
+                               const vector<Edge> &off_tree_edges,
+                               const vector<int> &lca,
+                               const vector<int> &depth) {
   ScopeTimer __t("add_off_tree_edges");
   vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
   for (int i = 0; i < off_tree_edges.size(); ++i) {
@@ -202,26 +202,15 @@ vector<Edge> add_off_tree_edges(const int node_cnt,
     rebuilt_off_tree_graph[e.a].push_back(i);
     rebuilt_off_tree_graph[e.b].push_back(i);
   }
-  vector<Edge> edges_to_be_add;
+  vector<int> edges_to_be_add;
   vector<bool> ban(off_tree_edges.size());
-  struct UnweightedEdge {
-    int u, v;
-    bool operator==(const UnweightedEdge &rhs) const {
-      return (u == rhs.u && v == rhs.v) || (u == rhs.v && v == rhs.u);
-    }
-  };
-  struct UnweightedEdgeHash {
-    size_t operator()(const UnweightedEdge &other) const {
-      return hash<int>()(other.u) ^ hash<int>()(other.v);
-    }
-  };
   for (int i = 0; i < off_tree_edges.size(); ++i) {
     if (edges_to_be_add.size() == max(int(off_tree_edges.size() / 25), 2)) {
       break;
     }
     auto &e = off_tree_edges[i];
     if (ban[i] == 0) {
-      edges_to_be_add.push_back(e);
+      edges_to_be_add.push_back(i);
       int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
 #ifdef DEBUG
       printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
@@ -365,8 +354,8 @@ int main(int argc, const char *argv[]) {
   }
 #endif
 
-  vector<Edge> res = add_off_tree_edges(M, new_tree, tree_edges, off_tree_edges,
-                                        lca, tree_unweighted_depth);
+  vector<int> res = add_off_tree_edges(M, new_tree, tree_edges, off_tree_edges,
+                                       lca, tree_unweighted_depth);
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +
                                      (end.tv_usec - start.tv_usec) / 1000.0);
@@ -378,7 +367,8 @@ int main(int argc, const char *argv[]) {
     fprintf(out, "%d %d\n", int(tree_edges[i].a), int(tree_edges[i].b));
   }
   for (int i = 0; i < res.size(); i++) {
-    fprintf(out, "%d %d\n", int(res[i].a), int(res[i].b));
+    fprintf(out, "%d %d\n", int(off_tree_edges[res[i]].a),
+            int(off_tree_edges[res[i]].b));
   }
   fclose(out);
 }
