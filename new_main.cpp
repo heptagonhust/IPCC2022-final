@@ -184,7 +184,7 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<int> &lca,
   ScopeTimer __t("sort_off_tree_edges");
   for (int i = 0; i < edges.size(); ++i) {
     auto &e = edges[i];
-    e.weight = depth[e.a] + depth[e.b] - 2 * depth[e.lca];
+    e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
   }
 #ifdef DEBUG
   puts("unsorted_off_tree_edges");
