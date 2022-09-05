@@ -1,4 +1,3 @@
-#include "parallel_hashmap/phmap.h"
 #include "timer.hpp"
 #include <algorithm>
 #include <cstddef>
@@ -197,79 +196,77 @@ vector<int> add_off_tree_edges(const int node_cnt,
   }
   vector<int> edges_to_be_add;
   vector<bool> ban(off_tree_edges.size());
+  vector<bool> black_list1(node_cnt + 1, false);
+
+  int alpha = max(int(off_tree_edges.size() / 25), 2);
   for (int i = 0; i < off_tree_edges.size(); ++i) {
-    if (edges_to_be_add.size() == max(int(off_tree_edges.size() / 25), 2)) {
+    if (edges_to_be_add.size() == alpha) {
       break;
     }
+    if (ban[i]) {
+      continue;
+    }
     auto &e = off_tree_edges[i];
-    if (ban[i] == 0) {
-      edges_to_be_add.push_back(i);
-      int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
+    edges_to_be_add.push_back(i);
+    int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
 #ifdef DEBUG
-      printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
+    printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
 #endif
-      struct QueueEntry {
-        int node, layer;
-      };
-      auto beta_layer_bfs_1 = [&tree, &tree_edges,
-                               beta](int start, queue<QueueEntry> q,
-                                     vector<int> &black_list) {
-        vector<bool> vis(tree.size(), false);
-        vis[start] = true;
-        black_list.push_back(start);
-        while (!q.empty()) {
-          int cur_node = q.front().node;
-          int cur_layer = q.front().layer;
-          q.pop();
-          for (int j = 0; j < tree[cur_node].size(); ++j) {
-            const Edge &e = tree_edges[tree[cur_node][j]];
-            int v = cur_node ^ e.a ^ e.b;
-            if (!vis[v] && cur_layer + 1 <= beta) {
-              vis[v] = true;
-              black_list.push_back(v);
-              q.push({v, cur_layer + 1});
-            }
-          }
-        }
-      };
-      auto beta_layer_bfs_2 = [&tree, &tree_edges,
-                               beta](int start, queue<QueueEntry> q,
-                                     phmap::flat_hash_set<int> &black_list) {
-        vector<bool> vis(tree.size(), false);
-        vis[start] = true;
-        black_list.insert(start);
-        while (!q.empty()) {
-          int cur_node = q.front().node;
-          int cur_layer = q.front().layer;
-          q.pop();
-          for (int j = 0; j < tree[cur_node].size(); ++j) {
-            const Edge &e = tree_edges[tree[cur_node][j]];
-            int v = cur_node ^ e.a ^ e.b;
-            if (!vis[v] && cur_layer + 1 <= beta) {
-              vis[v] = true;
-              black_list.insert(v);
-              q.push({v, cur_layer + 1});
-            }
-          }
-        }
-      };
-      queue<QueueEntry> q1, q2;
-      q1.push({e.a, 0}), q2.push({e.b, 0});
-      vector<int> black_list1;
-      phmap::flat_hash_set<int> black_list2;
-      beta_layer_bfs_1(e.a, q1, black_list1);
-      beta_layer_bfs_2(e.b, q2, black_list2);
-      for (auto u : black_list1) {
-        for (int j = 0; j < rebuilt_off_tree_graph[u].size(); ++j) {
-          const Edge &e = off_tree_edges[rebuilt_off_tree_graph[u][j]];
-          int v = u ^ e.a ^ e.b;
-          if (black_list2.count(v) > 0) {
-            ban[rebuilt_off_tree_graph[u][j]] = 1;
+    struct QueueEntry {
+      int node, layer;
+    };
+    auto beta_layer_bfs_1 = [&tree, &tree_edges, &black_list1,
+                             beta](int start, vector<QueueEntry> q) {
+      vector<bool> vis(tree.size(), false);
+      vis[start] = true;
+      for (int i = 0; i < q.size(); i++) {
+        int cur_node = q[i].node;
+        int cur_layer = q[i].layer;
+        black_list1[cur_node] = true;
+        for (auto &j : tree[cur_node]) {
+          const Edge &e = tree_edges[j];
+          int v = cur_node ^ e.a ^ e.b;
+          if (!vis[v] && cur_layer + 1 <= beta) {
+            vis[v] = true;
+            q.push_back({v, cur_layer + 1});
           }
         }
       }
+    };
+    auto beta_layer_bfs_2 = [&tree, &tree_edges, &ban, &off_tree_edges,
+                             &rebuilt_off_tree_graph, &black_list1,
+                             beta](int start, vector<QueueEntry> q) {
+      vector<bool> vis(tree.size(), false);
+      vis[start] = true;
+      for (int i = 0; i < q.size(); i++) {
+        int cur_node = q.front().node;
+        int cur_layer = q.front().layer;
+        for (auto &j : rebuilt_off_tree_graph[cur_node]) {
+          const Edge &e = off_tree_edges[j];
+          int v = cur_node ^ e.a ^ e.b;
+          if (black_list1[v]) {
+            ban[j] = 1;
+          }
+        }
+        for (auto &j : tree[cur_node]) {
+          const Edge &e = tree_edges[j];
+          int v = cur_node ^ e.a ^ e.b;
+          if (!vis[v] && cur_layer + 1 <= beta) {
+            vis[v] = true;
+            q.push_back({v, cur_layer + 1});
+          }
+        }
+      }
+    };
+    vector<QueueEntry> q1(0), q2(0);
+    q1.push_back({e.a, 0}), q2.push_back({e.b, 0});
+    beta_layer_bfs_1(e.a, q1);
+    beta_layer_bfs_2(e.b, q2);
+    for (auto &u : q1) {
+      black_list1[u.node] = false;
     }
   }
+
   return edges_to_be_add;
 }
 
