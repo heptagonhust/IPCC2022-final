@@ -217,9 +217,10 @@ vector<int> add_off_tree_edges(const int node_cnt,
 #ifdef DEBUG
     printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
 #endif
-    
+
     auto beta_layer_bfs_1 = [&tree, &tree_edges, &black_list1,
-                             beta](int start, vector<QueueEntry> &q, vector<bool> &vis) -> int {
+                             beta](int start, vector<QueueEntry> &q,
+                                   vector<bool> &vis) -> int {
       vis[start] = true;
       int rear = 1;
       for (int idx = 0; idx < rear; idx++) {
@@ -237,21 +238,15 @@ vector<int> add_off_tree_edges(const int node_cnt,
       }
       return rear;
     };
-    auto beta_layer_bfs_2 = [&tree, &tree_edges, &ban, &off_tree_edges,
-                             &rebuilt_off_tree_graph, &black_list1,
-                             beta](int start, vector<QueueEntry> &q, vector<bool> &vis) -> int{
+    auto beta_layer_bfs_2 = [&tree, &tree_edges,
+                             beta](int start, vector<QueueEntry> &q,
+                                   vector<bool> &vis) -> int {
       vis[start] = true;
       int rear = 1;
       for (int idx = 0; idx < rear; idx++) {
         int cur_node = q[idx].node;
         int cur_layer = q[idx].layer;
-        for (auto &j : rebuilt_off_tree_graph[cur_node]) {
-          const Edge &e = off_tree_edges[j];
-          int v = cur_node ^ e.a ^ e.b;
-          if (black_list1[v]) {
-            ban[j] = 1;
-          }
-        }
+
         for (auto &j : tree[cur_node]) {
           const Edge &e = tree_edges[j];
           int v = cur_node ^ e.a ^ e.b;
@@ -273,6 +268,16 @@ vector<int> add_off_tree_edges(const int node_cnt,
     for (int j = 0; j < size2; j++) {
       vis[q2[j].node] = false;
     }
+    for (int t = 0; t < size2; t++) {
+      for (auto &j : rebuilt_off_tree_graph[q2[t].node]) {
+        const Edge &e = off_tree_edges[j];
+        int v = q2[t].node ^ e.a ^ e.b;
+        if (black_list1[v]) {
+          ban[j] = 1;
+        }
+      }
+    }
+
     for (int j = 0; j < size1; j++) {
       black_list1[q1[j].node] = false;
     }
