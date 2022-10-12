@@ -216,7 +216,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
       int node, layer;
     };
     auto beta_layer_bfs_1 = [&tree, &tree_edges, &black_list1,
-                             beta](int start, vector<QueueEntry> q) {
+                             beta](int start, vector<QueueEntry> &q) {
       vector<bool> vis(tree.size(), false);
       vis[start] = true;
       for (int i = 0; i < q.size(); i++) {
@@ -239,8 +239,8 @@ vector<int> add_off_tree_edges(const int node_cnt,
       vector<bool> vis(tree.size(), false);
       vis[start] = true;
       for (int i = 0; i < q.size(); i++) {
-        int cur_node = q.front().node;
-        int cur_layer = q.front().layer;
+        int cur_node = q[i].node;
+        int cur_layer = q[i].layer;
         for (auto &j : rebuilt_off_tree_graph[cur_node]) {
           const Edge &e = off_tree_edges[j];
           int v = cur_node ^ e.a ^ e.b;
