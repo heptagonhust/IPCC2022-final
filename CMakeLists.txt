@@ -5,10 +5,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE INTERNAL "")
 add_compile_options(-Wall -Wno-unused-result -Wno-sign-compare -O3 -g -mavx2)
 # add_compile_options(-fsanitize=address)
 # add_link_options(-fsanitize=address)
-
+add_link_options(-lpthread)
 
 add_executable(sparsify main.cpp)
-add_executable(ng-sparsify new_main.cpp timer.hpp)
+add_executable(ng-sparsify new_main.cpp timer.hpp SPSCQueue.h)
 
 # find_package(OpenMP REQUIRED)
 # find_package(MPI REQUIRED)
