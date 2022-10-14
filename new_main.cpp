@@ -308,7 +308,10 @@ vector<int> add_off_tree_edges(const int node_cnt,
                                  rebuilt_off_tree_graph, tree_edges,
                                  off_tree_edges, depth);
     });
-    threads[i].join();
+    
+  }
+  for(auto &thread: threads) {
+    thread.join();
   }
 
   int alpha = max(int(off_tree_edges.size() / 25), 2);
