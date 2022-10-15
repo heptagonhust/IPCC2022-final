@@ -39,7 +39,7 @@ SOFTWARE.
 #define RIGTORP_NODISCARD
 #endif
 
-const int spsc_capacity = 10000;
+const int spsc_capacity = 64;
 
 namespace rigtorp {
 
