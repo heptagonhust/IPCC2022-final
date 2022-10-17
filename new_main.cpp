@@ -188,15 +188,14 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
 
 using namespace rigtorp;
 
-constexpr int num_producer = 63;
+constexpr int num_producer = 64;
 
 void produce_ban_off_tree_edges(
-    const int &tid, SPSCQueue<vector<int>> &q, const int &node_cnt,
+    const int &tid, const int &node_cnt,
     const vector<vector<int>> &tree,
     const vector<vector<int>> &rebuilt_off_tree_graph,
     const vector<Edge> &tree_edges, const vector<Edge> &off_tree_edges,
-    const vector<int> &depth, const vector<atomic_bool> &banned,
-    const atomic_bool &done) {
+    const vector<int> &depth) {
 
   struct QueueEntry {
     int node, layer;
@@ -205,11 +204,11 @@ void produce_ban_off_tree_edges(
   vector<bool> black_list1(node_cnt + 1, false);
   vector<bool> vis(tree.size(), false);
   vector<QueueEntry> q1(node_cnt), q2(node_cnt);
-  for (int i = tid; i < off_tree_edges.size() && !done; i += num_producer) {
-    if (banned[i]) {
-      q.emplace(vector<int>{});
-      continue;
-    }
+  for (int i = tid; i < off_tree_edges.size(); i += num_producer) {
+    // if (banned[i]) {
+    //   q.emplace(vector<int>{});
+    //   continue;
+    // }
     // Performance: optimize vector
     // fprintf(stderr, ">>>tid %d, producing: %d\n", tid, i);
     auto &e = off_tree_edges[i];
@@ -273,7 +272,7 @@ void produce_ban_off_tree_edges(
       for (auto &j : rebuilt_off_tree_graph[q2[t].node]) {
         const Edge &e = off_tree_edges[j];
         int v = q2[t].node ^ e.a ^ e.b;
-        if (black_list1[v] && !banned[j]) {
+        if (black_list1[v]) {
           ban_edges.emplace_back(j);
           // printf("%d\n", j);
         }
@@ -283,7 +282,7 @@ void produce_ban_off_tree_edges(
     for (int j = 0; j < size1; j++) {
       black_list1[q1[j].node] = false;
     }
-    q.emplace(std::move(ban_edges));
+    // q.emplace(std::move(ban_edges));
     // fprintf(stderr, "<<<tid %d, done: %d\n", tid, i);
   }
   // fprintf(stderr, "<<<end thread: %d\n", tid);
@@ -295,7 +294,6 @@ vector<int> add_off_tree_edges(const int node_cnt,
                                const vector<Edge> &off_tree_edges,
                                const vector<int> &depth) {
 
-  ScopeTimer __t("add_off_tree_edges");
   vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
   for (int i = 0; i < off_tree_edges.size(); ++i) {
     auto &e = off_tree_edges[i];
@@ -306,54 +304,55 @@ vector<int> add_off_tree_edges(const int node_cnt,
   vector<atomic_bool> banned(off_tree_edges.size());
   std::thread threads[num_producer];
   SPSCQueue<vector<int>> spscs[num_producer];
-  std::atomic_bool thread_done{false};
+  ScopeTimer __t("add_off_tree_edges");
+
   for (int i = 0; i < num_producer; i++) {
     threads[i] = std::thread([&, i] {
-      produce_ban_off_tree_edges(i, spscs[i], node_cnt, tree,
+      produce_ban_off_tree_edges(i, node_cnt, tree,
                                  rebuilt_off_tree_graph, tree_edges,
-                                 off_tree_edges, depth, banned, thread_done);
+                                 off_tree_edges, depth);
     });
   }
 
   int consumer_ban_cnt1 = 0;
   int consumer_ban_cnt2 = 0;
   int last_i = -1;
-  int alpha = max(int(off_tree_edges.size() / 25), 2);
-  for (int i = 0; i < off_tree_edges.size(); ++i) {
-    if (edges_to_be_add.size() == alpha) {
-      last_i = i;
-      break;
-    }
-    int qid = i % num_producer;
-    // fprintf(stderr, ">>>i: %d, qid: %d\n", i, qid);
-    while (!spscs[qid].front())
-      ;
-    auto ban_edges = spscs[qid].front();
+  // int alpha = max(int(off_tree_edges.size() / 25), 2);
+  // for (int i = 0; i < off_tree_edges.size(); ++i) {
+  //   if (edges_to_be_add.size() == alpha) {
+  //     last_i = i;
+  //     break;
+  //   }
+  //   int qid = i % num_producer;
+  //   // fprintf(stderr, ">>>i: %d, qid: %d\n", i, qid);
+  //   while (!spscs[qid].front())
+  //     ;
+  //   auto ban_edges = spscs[qid].front();
 
-    // fprintf(stderr, ">>>i: %d, pid: %d, ban_size: %lu\n", i, qid,
-    //         ban_edges->size());
-    if (banned[i]) {
-      if (ban_edges->size() != 0) {
-        consumer_ban_cnt1++;
-      }
-      consumer_ban_cnt2++;
+  //   // fprintf(stderr, ">>>i: %d, pid: %d, ban_size: %lu\n", i, qid,
+  //   //         ban_edges->size());
+  //   if (banned[i]) {
+  //     if (ban_edges->size() != 0) {
+  //       consumer_ban_cnt1++;
+  //     }
+  //     consumer_ban_cnt2++;
 
-      spscs[qid].pop();
-      continue;
-    }
-    for (auto &edge_idx : *ban_edges) {
-      // printf("%d\n", edge_idx);
-      banned[edge_idx] = true;
-    }
-    spscs[qid].pop();
+  //     spscs[qid].pop();
+  //     continue;
+  //   }
+  //   for (auto &edge_idx : *ban_edges) {
+  //     // printf("%d\n", edge_idx);
+  //     banned[edge_idx] = true;
+  //   }
+  //   spscs[qid].pop();
 
-    edges_to_be_add.push_back(i);
-  }
-  thread_done = true;
-  for (auto &q : spscs) {
-    if (q.front() != nullptr)
-      q.pop();
-  }
+  //   edges_to_be_add.push_back(i);
+  // }
+  // thread_done = true;
+  // for (auto &q : spscs) {
+  //   if (q.front() != nullptr)
+  //     q.pop();
+  // }
   // printf("ave bans: %f\n", 1.f * ban_cnt / alpha);
   for (auto &thread : threads) {
     thread.join();
