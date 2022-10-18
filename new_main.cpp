@@ -188,7 +188,7 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
 
 using namespace rigtorp;
 
-constexpr int num_producer = 63;
+constexpr int num_producer = 64;
 
 void produce_ban_off_tree_edges(
     const int &tid, SPSCQueue<vector<int>> &q, const int &node_cnt,
@@ -315,6 +315,17 @@ vector<int> add_off_tree_edges(const int node_cnt,
     });
   }
 
+  auto probe = [&]() {
+    while(!thread_done) {
+      for(int i = 0; i < num_producer; i++) {
+        printf(">> size of buffer %d: %lu\n", i, spscs[i].size());        
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+  };
+
+  auto probe_thread = std::thread(probe);
+
   int consumer_ban_cnt1 = 0;
   int consumer_ban_cnt2 = 0;
   int last_i = -1;
@@ -326,8 +337,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
     }
     int qid = i % num_producer;
     // fprintf(stderr, ">>>i: %d, qid: %d\n", i, qid);
-    while (!spscs[qid].front())
-      ;
+    while (!spscs[qid].front());
     auto ban_edges = spscs[qid].front();
 
     // fprintf(stderr, ">>>i: %d, pid: %d, ban_size: %lu\n", i, qid,
@@ -358,6 +368,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
   for (auto &thread : threads) {
     thread.join();
   }
+  probe_thread.join();
   fprintf(stderr,
           ">>> total consumed:%d, producer wasted: %d\n, total wasted: %d\n",
           last_i, consumer_ban_cnt1, consumer_ban_cnt2);
