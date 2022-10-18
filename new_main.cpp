@@ -188,10 +188,10 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
 
 using namespace rigtorp;
 
-constexpr int num_producer = 63;
+constexpr int num_producer = 1;
 
 void produce_ban_off_tree_edges(
-    const int &tid, SPSCQueue<vector<int>> &q, const int &node_cnt,
+    const int &tid, SPSCQueue<vector<int>> &spsc, const int &node_cnt,
     const vector<vector<int>> &tree,
     const vector<vector<int>> &rebuilt_off_tree_graph,
     const vector<Edge> &tree_edges, const vector<Edge> &off_tree_edges,
@@ -207,7 +207,7 @@ void produce_ban_off_tree_edges(
   vector<QueueEntry> q1(node_cnt), q2(node_cnt);
   for (int i = tid; i < off_tree_edges.size() && !done; i += num_producer) {
     if (banned[i]) {
-      q.emplace(vector<int>{});
+      spsc.emplace(vector<int>{});
       continue;
     }
     // Performance: optimize vector
@@ -283,7 +283,7 @@ void produce_ban_off_tree_edges(
     for (int j = 0; j < size1; j++) {
       black_list1[q1[j].node] = false;
     }
-    q.emplace(std::move(ban_edges));
+    spsc.emplace(std::move(ban_edges));
     // fprintf(stderr, "<<<tid %d, done: %d\n", tid, i);
   }
   // fprintf(stderr, "<<<end thread: %d\n", tid);
