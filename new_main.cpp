@@ -239,14 +239,24 @@ void produce_ban_off_tree_edges(
       }
       return rear;
     };
-    auto beta_layer_bfs_2 = [&tree, &tree_edges,
-                             beta](int start, vector<QueueEntry> &q,
-                                   vector<bool> &vis) -> int {
+    auto beta_layer_bfs_2 = [&rebuilt_off_tree_graph, &off_tree_edges,
+                             &black_list1, &banned, &tree, &tree_edges,
+                             &ban_edges, beta](int start, vector<QueueEntry> &q,
+                                               vector<bool> &vis) -> int {
       vis[start] = true;
       int rear = 1;
       for (int idx = 0; idx < rear; idx++) {
         int cur_node = q[idx].node;
         int cur_layer = q[idx].layer;
+
+        for (auto &j : rebuilt_off_tree_graph[cur_node]) {
+          const Edge &e = off_tree_edges[j];
+          int v = cur_node ^ e.a ^ e.b;
+          if (black_list1[v] && !banned[j]) {
+            ban_edges.emplace_back(j);
+            // printf("%d\n", j);
+          }
+        }
 
         for (auto &j : tree[cur_node]) {
           const Edge &e = tree_edges[j];
@@ -268,16 +278,6 @@ void produce_ban_off_tree_edges(
     int size2 = beta_layer_bfs_2(e.b, q2, vis);
     for (int j = 0; j < size2; j++) {
       vis[q2[j].node] = false;
-    }
-    for (int t = 0; t < size2; t++) {
-      for (auto &j : rebuilt_off_tree_graph[q2[t].node]) {
-        const Edge &e = off_tree_edges[j];
-        int v = q2[t].node ^ e.a ^ e.b;
-        if (black_list1[v] && !banned[j]) {
-          ban_edges.emplace_back(j);
-          // printf("%d\n", j);
-        }
-      }
     }
 
     for (int j = 0; j < size1; j++) {
