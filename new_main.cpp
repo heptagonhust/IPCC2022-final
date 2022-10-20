@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <math.h>
+#include <omp.h>
 #include <queue>
 #include <stack>
 #include <string>
@@ -188,6 +189,8 @@ void mark_ban_edges(vector<bool> &ban, const vector<int> &ban_edges) {
   }
 }
 
+constexpr int batch = 1;
+
 vector<int> add_off_tree_edges(const int node_cnt,
                                const vector<vector<int>> &tree,
                                const vector<Edge> &tree_edges,
@@ -205,90 +208,93 @@ vector<int> add_off_tree_edges(const int node_cnt,
   }
   vector<int> edges_to_be_add;
   vector<bool> ban(off_tree_edges.size());
-  vector<bool> black_list1(node_cnt + 1, false);
-  vector<bool> vis(tree.size(), false);
-  vector<QueueEntry> q1(node_cnt), q2(node_cnt);
 
   int alpha = max(int(off_tree_edges.size() / 25), 2);
-  for (int i = 0; i < off_tree_edges.size(); ++i) {
+  for (int b = 0; b < off_tree_edges.size(); b += batch) {
+    int batch_end = b + batch;
+    if (batch_end > off_tree_edges.size()) {
+      batch_end = off_tree_edges.size();
+    }
+    int batch_size = batch_end - b;
+    vector<vector<int>> ban_buffers(batch_size);
+// #pragma omp parallel for num_threads(32) schedule(dynamic)
+    for (int i = b; i < batch_end; i++) {
+      if (ban[i]) {
+        continue;
+      }
+      auto &e = off_tree_edges[i];
+      int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
+#ifdef DEBUG
+      printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
+#endif
+      vector<bool> black_list1(node_cnt + 1, false);
+
+      auto beta_layer_bfs_1 = [&tree, &tree_edges, &black_list1, node_cnt,
+                               beta](int start) {
+        vector<bool> vis(node_cnt + 1, false);
+        queue<QueueEntry> q;
+        q.push({start, 0});
+        vis[start] = true;
+        while (!q.empty()) {
+          int cur_node = q.front().node;
+          int cur_layer = q.front().layer;
+          q.pop();
+          black_list1[cur_node] = true;
+          for (auto &j : tree[cur_node]) {
+            const Edge &e = tree_edges[j];
+            int v = cur_node ^ e.a ^ e.b;
+            if (!vis[v] && cur_layer + 1 <= beta) {
+              vis[v] = true;
+              q.push({v, cur_layer + 1});
+            }
+          }
+        }
+      };
+      auto beta_layer_bfs_2 = [&tree, &tree_edges, &off_tree_edges,
+                               &rebuilt_off_tree_graph, &black_list1, node_cnt,
+                               beta](int start, vector<int> &ban_edges) {
+        vector<bool> vis(node_cnt + 1, false);
+        queue<QueueEntry> q;
+        q.push({start, 0});
+        vis[start] = true;
+        while (!q.empty()) {
+          int cur_node = q.front().node;
+          int cur_layer = q.front().layer;
+          q.pop();
+          for (auto &j : rebuilt_off_tree_graph[cur_node]) {
+            const Edge &e = off_tree_edges[j];
+            int v = cur_node ^ e.a ^ e.b;
+            if (black_list1[v]) {
+              ban_edges.push_back(j);
+            }
+          }
+          for (auto &j : tree[cur_node]) {
+            const Edge &e = tree_edges[j];
+            int v = cur_node ^ e.a ^ e.b;
+            if (!vis[v] && cur_layer + 1 <= beta) {
+              vis[v] = true;
+              q.push({v, cur_layer + 1});
+            }
+          }
+        }
+      };
+      vector<int> ban_edges{};
+      beta_layer_bfs_1(e.a);
+      beta_layer_bfs_2(e.b, ban_edges);
+
+      ban_buffers[i - b] = ban_edges;
+    }
+    for (int i = b; i < batch_end; i++) {
+      if (!ban[i]) {
+        edges_to_be_add.push_back(i);
+        mark_ban_edges(ban, ban_buffers[i - b]);
+      }
+    }
     if (edges_to_be_add.size() == alpha) {
       break;
     }
-    if (ban[i]) {
-      continue;
-    }
-    auto &e = off_tree_edges[i];
-    edges_to_be_add.push_back(i);
-    int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
-#ifdef DEBUG
-    printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
-#endif
-
-    auto beta_layer_bfs_1 = [&tree, &tree_edges, &black_list1,
-                             beta](int start, vector<QueueEntry> &q,
-                                   vector<bool> &vis) -> int {
-      vis[start] = true;
-      int rear = 1;
-      for (int idx = 0; idx < rear; idx++) {
-        int cur_node = q[idx].node;
-        int cur_layer = q[idx].layer;
-        black_list1[cur_node] = true;
-        for (auto &j : tree[cur_node]) {
-          const Edge &e = tree_edges[j];
-          int v = cur_node ^ e.a ^ e.b;
-          if (!vis[v] && cur_layer + 1 <= beta) {
-            vis[v] = true;
-            q[rear++] = {v, cur_layer + 1};
-          }
-        }
-      }
-      return rear;
-    };
-    auto beta_layer_bfs_2 =
-        [&tree, &tree_edges, &off_tree_edges, &rebuilt_off_tree_graph,
-         &black_list1, beta](int start, vector<QueueEntry> &q,
-                             vector<bool> &vis, vector<int> &ban_edges) -> int {
-      vis[start] = true;
-      int rear = 1;
-      for (int idx = 0; idx < rear; idx++) {
-        int cur_node = q[idx].node;
-        int cur_layer = q[idx].layer;
-        for (auto &j : rebuilt_off_tree_graph[cur_node]) {
-          const Edge &e = off_tree_edges[j];
-          int v = cur_node ^ e.a ^ e.b;
-          if (black_list1[v]) {
-            ban_edges.push_back(j);
-          }
-        }
-        for (auto &j : tree[cur_node]) {
-          const Edge &e = tree_edges[j];
-          int v = cur_node ^ e.a ^ e.b;
-          if (!vis[v] && cur_layer + 1 <= beta) {
-            vis[v] = true;
-            q[rear++] = {v, cur_layer + 1};
-          }
-        }
-      }
-      return rear;
-    };
-    vector<int> ban_edges{};
-    q1[0] = {e.a, 0};
-    q2[0] = {e.b, 0};
-    int size1 = beta_layer_bfs_1(e.a, q1, vis);
-    for (int j = 0; j < size1; j++) {
-      vis[q1[j].node] = false;
-    }
-    int size2 = beta_layer_bfs_2(e.b, q2, vis, ban_edges);
-    for (int j = 0; j < size2; j++) {
-      vis[q2[j].node] = false;
-    }
-    for (int j = 0; j < size1; j++) {
-      black_list1[q1[j].node] = false;
-    }
-
-    mark_ban_edges(ban, ban_edges);
   }
-
+  edges_to_be_add.resize(alpha);
   return edges_to_be_add;
 }
 
