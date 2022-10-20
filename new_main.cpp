@@ -188,7 +188,7 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
 
 using namespace rigtorp;
 
-constexpr int num_producer = 1;
+constexpr int num_producer = 32;
 
 void produce_ban_off_tree_edges(
     const int &tid, SPSCQueue<vector<int>> &spsc, const int &node_cnt,
@@ -315,13 +315,12 @@ vector<int> add_off_tree_edges(const int node_cnt,
     });
   }
 
-  int consumer_ban_cnt1 = 0;
+  // int consumer_ban_cnt1 = 0;
+  vector<int> consumer_ban_cnt1(num_producer, 0);
   int consumer_ban_cnt2 = 0;
-  int last_i = -1;
   int alpha = max(int(off_tree_edges.size() / 25), 2);
   for (int i = 0; i < off_tree_edges.size(); ++i) {
     if (edges_to_be_add.size() == alpha) {
-      last_i = i;
       break;
     }
     int qid = i % num_producer;
@@ -334,7 +333,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
     //         ban_edges->size());
     if (banned[i]) {
       if (ban_edges->size() != 0) {
-        consumer_ban_cnt1++;
+        consumer_ban_cnt1[qid]++;
       }
       consumer_ban_cnt2++;
 
@@ -358,9 +357,12 @@ vector<int> add_off_tree_edges(const int node_cnt,
   for (auto &thread : threads) {
     thread.join();
   }
-  fprintf(stderr,
-          ">>> total consumed:%d, producer wasted: %d\n, total wasted: %d\n",
-          last_i, consumer_ban_cnt1, consumer_ban_cnt2);
+  for(int i = 0; i < num_producer; i++) {
+    fprintf(stderr, ">>> producer %d wasted %d\n", i, consumer_ban_cnt1[i]);
+  }
+  // fprintf(stderr,
+  //         ">>> total consumed:%d, producer wasted: %d\n, total wasted: %d\n",
+  //         last_i, consumer_ban_cnt1, consumer_ban_cnt2);
   return edges_to_be_add;
 }
 
