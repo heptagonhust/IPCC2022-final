@@ -25,14 +25,14 @@ struct Edge {
 };
 
 int largest_volume_node(const vector<double> &volume) {
-  ScopeTimer __t("largest_volume_node");
+  ScopeTimer t_("largest_volume_node");
   return max_element(volume.begin(), volume.end()) - volume.begin();
 }
 
 vector<int> get_unweighted_distance_bfs(const vector<Edge> &edges,
                                         const vector<vector<int>> &G,
                                         int start) {
-  ScopeTimer __t("get_unweighted_distance_bfs");
+  ScopeTimer t_("get_unweighted_distance_bfs");
   vector<int> res(G.size());
   vector<bool> vis(G.size());
   vis[start] = 1;
@@ -58,7 +58,7 @@ vector<int> get_unweighted_distance_bfs(const vector<Edge> &edges,
 
 vector<Edge> get_new_edges(const vector<Edge> &edges, const vector<int> &deg,
                            const vector<int> &unweighted_distance) {
-  ScopeTimer __t("get_new_edges");
+  ScopeTimer t_("get_new_edges");
   vector<Edge> res(edges.size());
   for (int i = 0; i < edges.size(); ++i) {
     res[i].a = edges[i].a;
@@ -89,7 +89,7 @@ struct UnionFindSet {
 
 void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
              vector<Edge> &off_tree_edges) {
-  ScopeTimer __t("kruskal");
+  ScopeTimer t_("kruskal");
   stable_sort(std::execution::par_unseq, edges.begin(), edges.end());
   tree_edges.reserve(node_cnt - 1);
   off_tree_edges.reserve(edges.size() - (node_cnt - 1));
@@ -112,7 +112,7 @@ void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
 }
 
 vector<vector<int>> rebuild_tree(int node_cnt, const vector<Edge> &tree) {
-  ScopeTimer __t("rebuild_tree");
+  ScopeTimer t_("rebuild_tree");
   vector<vector<int>> res(node_cnt + 1);
   for (int i = 0; i < tree.size(); ++i) {
     auto &e = tree[i];
@@ -153,7 +153,7 @@ void tarjan_lca_impl(const vector<vector<int>> &tree,
 void tarjan_lca(const vector<vector<int>> &tree, const vector<Edge> &tree_edges,
                 vector<Edge> &query_info, int root, int node_cnt,
                 vector<double> &weigthed_depth, vector<int> &unweighted_depth) {
-  ScopeTimer __t("tarjan_lca");
+  ScopeTimer t_("tarjan_lca");
   UnionFindSet ufs(node_cnt + 1);
   vector<bool> vis(node_cnt + 1);
   vector<vector<int>> query_indices(node_cnt + 1);
@@ -169,7 +169,7 @@ void tarjan_lca(const vector<vector<int>> &tree, const vector<Edge> &tree_edges,
 }
 
 void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
-  ScopeTimer __t("sort_off_tree_edges");
+  ScopeTimer t_("sort_off_tree_edges");
   for (int i = 0; i < edges.size(); ++i) {
     auto &e = edges[i];
     e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
@@ -197,7 +197,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
   struct QueueEntry {
     int node, layer, predecessor;
   };
-  ScopeTimer __t("add_off_tree_edges");
+  ScopeTimer t_("add_off_tree_edges");
   vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
   for (int i = 0; i < off_tree_edges.size(); ++i) {
     auto &e = off_tree_edges[i];
