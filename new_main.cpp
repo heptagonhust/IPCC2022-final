@@ -233,10 +233,13 @@ vector<int> add_off_tree_edges(const int node_cnt,
         int cur_node = q[idx].node;
         int cur_layer = q[idx].layer;
         black_list1[cur_node] = true;
+        if (cur_layer == beta) {
+          continue;
+        }
         for (auto &j : tree[cur_node]) {
           const Edge &e = tree_edges[j];
           int v = cur_node ^ e.a ^ e.b;
-          if (!vis[v] && cur_layer + 1 <= beta) {
+          if (!vis[v]) {
             vis[v] = true;
             q[rear++] = {v, cur_layer + 1};
           }
@@ -253,6 +256,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
       for (int idx = 0; idx < rear; idx++) {
         int cur_node = q[idx].node;
         int cur_layer = q[idx].layer;
+        
         for (auto &j : rebuilt_off_tree_graph[cur_node]) {
           const Edge &e = off_tree_edges[j];
           int v = cur_node ^ e.a ^ e.b;
@@ -260,10 +264,13 @@ vector<int> add_off_tree_edges(const int node_cnt,
             ban_edges.push_back(j);
           }
         }
+        if (cur_layer == beta) {
+          continue;
+        }
         for (auto &j : tree[cur_node]) {
           const Edge &e = tree_edges[j];
           int v = cur_node ^ e.a ^ e.b;
-          if (!vis[v] && cur_layer + 1 <= beta) {
+          if (!vis[v]) {
             vis[v] = true;
             q[rear++] = {v, cur_layer + 1};
           }
