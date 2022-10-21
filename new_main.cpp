@@ -60,6 +60,7 @@ vector<Edge> get_new_edges(const vector<Edge> &edges, const vector<int> &deg,
                            const vector<int> &unweighted_distance) {
   ScopeTimer t_("get_new_edges");
   vector<Edge> res(edges.size());
+#pragma omp parallel for
   for (int i = 0; i < edges.size(); ++i) {
     res[i].a = edges[i].a;
     res[i].b = edges[i].b;
@@ -170,6 +171,7 @@ void tarjan_lca(const vector<vector<int>> &tree, const vector<Edge> &tree_edges,
 
 void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
   ScopeTimer t_("sort_off_tree_edges");
+#pragma omp parallel for
   for (int i = 0; i < edges.size(); ++i) {
     auto &e = edges[i];
     e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
