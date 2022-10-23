@@ -153,12 +153,12 @@ void tarjan_lca_impl(const vector<vector<int>> &tree,
 
 void tarjan_lca(const vector<vector<int>> &tree, const vector<Edge> &tree_edges,
                 vector<Edge> &query_info, int root, int node_cnt,
-                vector<double> &weigthed_depth, vector<int> &unweighted_depth) {
+                vector<double> &weighted_depth, vector<int> &unweighted_depth) {
   ScopeTimer t_("tarjan_lca");
   UnionFindSet ufs(node_cnt + 1);
   vector<bool> vis(node_cnt + 1);
   vector<vector<int>> query_indices(node_cnt + 1);
-  weigthed_depth.resize(node_cnt + 1, 0);
+  weighted_depth.resize(node_cnt + 1, 0);
   unweighted_depth.resize(node_cnt + 1, 0);
   for (int i = 0; i < query_info.size(); ++i) {
     auto &e = query_info[i];
@@ -166,7 +166,7 @@ void tarjan_lca(const vector<vector<int>> &tree, const vector<Edge> &tree_edges,
     query_indices[e.b].push_back(i);
   }
   tarjan_lca_impl(tree, tree_edges, query_indices, query_info, root, ufs, vis,
-                  weigthed_depth, unweighted_depth);
+                  weighted_depth, unweighted_depth);
 }
 
 void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
