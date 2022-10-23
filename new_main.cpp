@@ -6,8 +6,10 @@
 #include <cstring>
 #include <execution>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <math.h>
+#include <optional>
 #include <queue>
 #include <stack>
 #include <string>
@@ -23,6 +25,13 @@ struct Edge {
   int lca;
   bool operator<(const Edge &rhs) const { return this->weight > rhs.weight; }
 };
+
+struct NodeBfsResult {
+  vector<int> nodes;
+  vector<int> layer_indices;
+};
+
+using OptionalBfsResult = std::optional<NodeBfsResult>;
 
 int largest_volume_node(const vector<double> &volume) {
   ScopeTimer t_("largest_volume_node");
@@ -191,6 +200,66 @@ void mark_ban_edges(vector<bool> &ban, const vector<int> &ban_edges) {
   }
 }
 
+vector<OptionalBfsResult> preprocess_bfs(const int node_cnt,
+                                         const vector<vector<int>> &tree,
+                                         const vector<Edge> &tree_edges,
+                                         const vector<Edge> &off_tree_edges,
+                                         const vector<int> &depth) {
+  ScopeTimer t_("preprocess_bfs");
+  vector<OptionalBfsResult> res(node_cnt + 1, std::nullopt);
+  vector<pair<int, int>> bfs_depth(node_cnt + 1);
+  for (int i = 0; i < bfs_depth.size(); ++i) {
+    bfs_depth[i].second = i;
+  }
+  for (const auto &i : off_tree_edges) {
+    int layers = min(depth[i.a], depth[i.b]) - depth[i.lca];
+    bfs_depth[i.a].first = max(bfs_depth[i.a].first, layers);
+    bfs_depth[i.b].first = max(bfs_depth[i.b].first, layers);
+  }
+  sort(bfs_depth.begin(), bfs_depth.end(), std::greater<>());
+
+  vector<bool> vis(node_cnt + 1); // XXX: this may prevent multi-threading!!
+
+  const auto bfs = [&tree, &tree_edges, &vis](int p, int depth,
+                                              NodeBfsResult &res) {
+    res.nodes.push_back(p);
+    res.layer_indices.push_back(0);
+    // res.layers = 0;
+    for (int cur_node_ptr = 0, cur_layer_index_ptr = 0;
+         cur_node_ptr != res.nodes.size(); cur_node_ptr++) {
+      int cur_node = res.nodes[cur_node_ptr];
+      if (res.layer_indices.size() != cur_layer_index_ptr + 1 &&
+          res.layer_indices[cur_layer_index_ptr + 1] == cur_node) {
+        cur_layer_index_ptr++;
+      }
+      int cur_layer = res.layer_indices[cur_layer_index_ptr];
+      if (cur_layer == depth) {
+        continue;
+      }
+      vis[cur_node] = 1;
+      for (const auto &j : tree[cur_node]) {
+        const Edge &e = tree_edges[j];
+        int v = cur_node ^ e.a ^ e.b;
+        if (!vis[v]) {
+          res.nodes.push_back(v);
+          if (cur_layer + 1 > res.layer_indices.size()) {
+            res.layer_indices.push_back(res.nodes.size() - 1);
+          }
+        }
+      }
+    }
+    for (const auto &i : res.nodes) {
+      vis[i] = 0;
+    }
+  };
+  for (int i = 0; i < bfs_depth.size() * 0.3; ++i) {
+    NodeBfsResult bfs_res;
+    bfs(bfs_depth[i].second, bfs_depth[i].first, bfs_res);
+    res[i] = std::make_optional(std::move(bfs_res));
+  }
+  return res;
+}
+
 vector<int> add_off_tree_edges(const int node_cnt,
                                const vector<vector<int>> &tree,
                                const vector<Edge> &tree_edges,
@@ -357,7 +426,8 @@ int main(int argc, const char *argv[]) {
   tarjan_lca(new_tree, tree_edges, off_tree_edges, r_node, M,
              tree_weighted_depth, tree_unweighted_depth);
   sort_off_tree_edges(off_tree_edges, tree_weighted_depth);
-
+  auto pre_bfs_res = preprocess_bfs(M, new_tree, tree_edges, off_tree_edges,
+                                    tree_unweighted_depth);
 #ifdef DEBUG
   puts("sorted off_tree_edges: ");
   for (auto &x : off_tree_edges) {
