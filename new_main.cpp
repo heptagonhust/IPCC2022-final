@@ -218,10 +218,9 @@ vector<OptionalBfsResult> preprocess_bfs(const int node_cnt,
   }
   sort(bfs_depth.begin(), bfs_depth.end(), std::greater<>());
 
-  vector<bool> vis(node_cnt + 1); // XXX: this may prevent multi-threading!!
-
-  const auto bfs = [&tree, &tree_edges, &vis](int p, int depth,
-                                              NodeBfsResult &res) {
+  const auto bfs = [&tree, &tree_edges](int p, int depth, NodeBfsResult &res) {
+    vector<int> predecessor;
+    predecessor.push_back(-1);
     res.nodes.push_back(p);
     res.layer_indices.push_back(0);
     // res.layers = 0;
@@ -236,23 +235,21 @@ vector<OptionalBfsResult> preprocess_bfs(const int node_cnt,
       if (cur_layer == depth) {
         continue;
       }
-      vis[cur_node] = 1;
       for (const auto &j : tree[cur_node]) {
         const Edge &e = tree_edges[j];
         int v = cur_node ^ e.a ^ e.b;
-        if (!vis[v]) {
+        if (v != res.nodes[predecessor[cur_node_ptr]]) {
           res.nodes.push_back(v);
+          predecessor.push_back(cur_node_ptr);
           if (cur_layer + 1 > res.layer_indices.size()) {
             res.layer_indices.push_back(res.nodes.size() - 1);
           }
         }
       }
     }
-    for (const auto &i : res.nodes) {
-      vis[i] = 0;
-    }
   };
-  for (int i = 0; i < bfs_depth.size() * 0.3; ++i) {
+  const int bfs_node_cnt = node_cnt * 0.3;
+  for (int i = 0; i < bfs_node_cnt; ++i) {
     NodeBfsResult bfs_res;
     bfs(bfs_depth[i].second, bfs_depth[i].first, bfs_res);
     res[i] = std::make_optional(std::move(bfs_res));
