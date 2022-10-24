@@ -198,10 +198,16 @@ vector<int> add_off_tree_edges(const int node_cnt,
   };
   ScopeTimer __t("add_off_tree_edges");
   vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
+  vector<int> bfs_max_depth(node_cnt + 1, 0);
+  vector<int> bfs_cnt(node_cnt + 1, 0);
   for (int i = 0; i < off_tree_edges.size(); ++i) {
     auto &e = off_tree_edges[i];
     rebuilt_off_tree_graph[e.a].push_back(i);
     rebuilt_off_tree_graph[e.b].push_back(i);
+    bfs_max_depth[e.a] =
+        max(min(depth[e.a], depth[e.b]) - depth[e.lca], bfs_max_depth[e.a]);
+    bfs_max_depth[e.b] =
+        max(min(depth[e.a], depth[e.b]) - depth[e.lca], bfs_max_depth[e.b]);
   }
   vector<int> edges_to_be_add;
   vector<bool> ban(off_tree_edges.size());
@@ -217,6 +223,9 @@ vector<int> add_off_tree_edges(const int node_cnt,
       continue;
     }
     auto &e = off_tree_edges[i];
+    bfs_cnt[e.a]++;
+    bfs_cnt[e.b]++;
+
     edges_to_be_add.push_back(i);
     int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
 #ifdef DEBUG
@@ -283,6 +292,15 @@ vector<int> add_off_tree_edges(const int node_cnt,
     }
 
     mark_ban_edges(ban, ban_edges);
+  }
+
+  vector<int> sorted_bfs_max_depth(bfs_max_depth);
+  sort(sorted_bfs_max_depth.begin(), sorted_bfs_max_depth.end());
+  int standard = sorted_bfs_max_depth[node_cnt * 2 / 3];
+  for(int i = 0; i <= node_cnt; i++) {
+   if(bfs_max_depth[i] >= standard) {
+    fprintf(stderr, "%d\n", bfs_cnt[i]);
+   } 
   }
 
   return edges_to_be_add;
