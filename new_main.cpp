@@ -1,5 +1,6 @@
 #include "timer.hpp"
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -69,7 +70,7 @@ vector<Edge> get_new_edges(const vector<Edge> &edges, const vector<int> &deg,
                            const vector<int> &unweighted_distance) {
   ScopeTimer t_("get_new_edges");
   vector<Edge> res(edges.size());
-#pragma omp parallel for
+  // #pragma omp parallel for
   for (int i = 0; i < edges.size(); ++i) {
     res[i].a = edges[i].a;
     res[i].b = edges[i].b;
@@ -101,7 +102,7 @@ void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
              vector<Edge> &off_tree_edges) {
   ScopeTimer t_("kruskal");
   // stable_sort(std::execution::par_unseq, edges.begin(), edges.end());
-  sort(edges.begin(), edges.end());
+  stable_sort(edges.begin(), edges.end());
   tree_edges.reserve(node_cnt - 1);
   off_tree_edges.reserve(edges.size() - (node_cnt - 1));
   UnionFindSet ufs(node_cnt + 1);
@@ -181,7 +182,7 @@ void tarjan_lca(const vector<vector<int>> &tree, const vector<Edge> &tree_edges,
 
 void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
   ScopeTimer t_("sort_off_tree_edges");
-#pragma omp parallel for
+  // #pragma omp parallel for
   for (int i = 0; i < edges.size(); ++i) {
     auto &e = edges[i];
     e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
@@ -193,7 +194,7 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
   }
 #endif
   // stable_sort(std::execution::par_unseq, edges.begin(), edges.end());
-  sort(edges.begin(), edges.end());
+  stable_sort(edges.begin(), edges.end());
 }
 
 void mark_ban_edges(vector<bool> &ban, const vector<int> &ban_edges) {
@@ -221,40 +222,41 @@ vector<OptionalBfsResult> preprocess_bfs(const int node_cnt,
   sort(bfs_depth.begin(), bfs_depth.end(), std::greater<>());
 
   const auto bfs = [&tree, &tree_edges](int p, int depth, NodeBfsResult &res) {
-    vector<int> predecessor;
+    vector<int> predecessor{};
+    vector<int> layer{};
     predecessor.push_back(-1);
     res.nodes.push_back(p);
-    res.layer_indices.push_back(0);
-    // res.layers = 0;
-    for (int cur_node_ptr = 0, cur_layer_index_ptr = 0;
-         cur_node_ptr != res.nodes.size(); cur_node_ptr++) {
-      int cur_node = res.nodes[cur_node_ptr];
-      if (res.layer_indices.size() != cur_layer_index_ptr + 1 &&
-          res.layer_indices[cur_layer_index_ptr + 1] == cur_node) {
-        cur_layer_index_ptr++;
+    res.layer_indices.push_back(1);
+    layer.push_back(0);
+    for (int cur_node_index = 0; cur_node_index < res.nodes.size();
+         cur_node_index++) {
+      int cur_node = res.nodes[cur_node_index];
+      int cur_layer = layer[cur_node_index];
+      if (cur_layer > res.layer_indices.size()) {
+        res.layer_indices.push_back(cur_node_index);
       }
-      int cur_layer = res.layer_indices[cur_layer_index_ptr];
       if (cur_layer == depth) {
         continue;
       }
       for (const auto &j : tree[cur_node]) {
         const Edge &e = tree_edges[j];
         int v = cur_node ^ e.a ^ e.b;
-        if (v != res.nodes[predecessor[cur_node_ptr]]) {
+        if (v != predecessor[cur_node_index]) {
           res.nodes.push_back(v);
-          predecessor.push_back(cur_node_ptr);
-          if (cur_layer + 1 > res.layer_indices.size()) {
-            res.layer_indices.push_back(res.nodes.size() - 1);
-          }
+          predecessor.push_back(cur_node);
+          layer.push_back(cur_layer + 1);
         }
       }
     }
+    res.layer_indices.push_back(res.nodes.size());
   };
   const int bfs_node_cnt = node_cnt * 0.3;
+#pragma omp parallel for schedule(dynamic) num_threads(32)
   for (int i = 0; i < bfs_node_cnt; ++i) {
-    NodeBfsResult bfs_res;
-    bfs(bfs_depth[i].second, bfs_depth[i].first, bfs_res);
-    res[i] = std::make_optional(std::move(bfs_res));
+    NodeBfsResult bfs_res{};
+    int node = bfs_depth[i].second;
+    bfs(node, bfs_depth[i].first, bfs_res);
+    res[node] = std::make_optional(std::move(bfs_res));
   }
   return res;
 }
@@ -263,7 +265,8 @@ vector<int> add_off_tree_edges(const int node_cnt,
                                const vector<vector<int>> &tree,
                                const vector<Edge> &tree_edges,
                                const vector<Edge> &off_tree_edges,
-                               const vector<int> &depth) {
+                               const vector<int> &depth,
+                               const vector<OptionalBfsResult> &pre_bfs_res) {
   struct QueueEntry {
     int node, layer, predecessor;
   };
@@ -287,6 +290,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
     if (ban[i]) {
       continue;
     }
+
     auto &e = off_tree_edges[i];
     edges_to_be_add.push_back(i);
     int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
@@ -294,7 +298,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
     printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
 #endif
 
-    auto beta_layer_bfs_1 = [&tree, &tree_edges, &black_list1,
+    auto beta_layer_bfs_1 = [&tree, &tree_edges,
                              beta](int start, vector<QueueEntry> &q) -> int {
       int rear = 0;
       q[rear++] = {start, 0, -1};
@@ -302,7 +306,6 @@ vector<int> add_off_tree_edges(const int node_cnt,
         int cur_node = q[idx].node;
         int cur_layer = q[idx].layer;
         int cur_pre = q[idx].predecessor;
-        black_list1[cur_node] = true;
         if (cur_layer == beta) {
           continue;
         }
@@ -316,23 +319,15 @@ vector<int> add_off_tree_edges(const int node_cnt,
       }
       return rear;
     };
-    auto beta_layer_bfs_2 = [&tree, &tree_edges, &off_tree_edges,
-                             &rebuilt_off_tree_graph, &black_list1,
-                             beta](int start, vector<QueueEntry> &q,
-                                   vector<int> &ban_edges) -> int {
+    auto beta_layer_bfs_2 = [&tree, &tree_edges,
+                             beta](int start, vector<QueueEntry> &q) -> int {
       int rear = 0;
       q[rear++] = {start, 0, -1};
       for (int idx = 0; idx < rear; idx++) {
         int cur_node = q[idx].node;
         int cur_layer = q[idx].layer;
         int cur_pre = q[idx].predecessor;
-        for (auto &j : rebuilt_off_tree_graph[cur_node]) {
-          const Edge &e = off_tree_edges[j];
-          int v = cur_node ^ e.a ^ e.b;
-          if (black_list1[v]) {
-            ban_edges.push_back(j);
-          }
-        }
+
         if (cur_layer == beta) {
           continue;
         }
@@ -347,10 +342,58 @@ vector<int> add_off_tree_edges(const int node_cnt,
       return rear;
     };
     vector<int> ban_edges{};
-    int size1 = beta_layer_bfs_1(e.a, q1);
-    beta_layer_bfs_2(e.b, q2, ban_edges);
+    int size1, size2;
+    vector<int> buffer1{}, buffer2{};
+
+    if (pre_bfs_res[e.a] != nullopt) {
+      size1 = pre_bfs_res[e.a]->layer_indices.size() > beta
+                  ? pre_bfs_res[e.a]->layer_indices[beta]
+                  : pre_bfs_res[e.a]->nodes.size();
+      buffer1.resize(size1);
+      for (int idx = 0; idx < size1; idx++) {
+        buffer1[idx] = pre_bfs_res[e.a]->nodes[idx];
+      }
+    } else {
+      size1 = beta_layer_bfs_1(e.a, q1);
+      buffer1.resize(size1);
+      for (int idx = 0; idx < size1; idx++) {
+        buffer1[idx] = q1[idx].node;
+      }
+    }
+
+    for (int idx = 0; idx < size1; idx++) {
+      black_list1[buffer1[idx]] = true;
+    }
+
+    if (pre_bfs_res[e.b] != nullopt) {
+      size2 = pre_bfs_res[e.b]->layer_indices.size() > beta
+                  ? pre_bfs_res[e.b]->layer_indices[beta]
+                  : pre_bfs_res[e.b]->nodes.size();
+      buffer2.resize(size2);
+      for (int idx = 0; idx < size2; idx++) {
+        buffer2[idx] = pre_bfs_res[e.b]->nodes[idx];
+      }
+    } else {
+      size2 = beta_layer_bfs_2(e.b, q2);
+      buffer2.resize(size2);
+      for (int idx = 0; idx < size2; idx++) {
+        buffer2[idx] = q2[idx].node;
+      }
+    }
+
+    for (int idx = 0; idx < size2; idx++) {
+      int cur_node = buffer2[idx];
+      for (auto &j : rebuilt_off_tree_graph[cur_node]) {
+        const Edge &e = off_tree_edges[j];
+        int v = cur_node ^ e.a ^ e.b;
+        if (black_list1[v]) {
+          ban_edges.push_back(j);
+        }
+      }
+    }
+
     for (int j = 0; j < size1; j++) {
-      black_list1[q1[j].node] = false;
+      black_list1[buffer1[j]] = false;
     }
 
     mark_ban_edges(ban, ban_edges);
@@ -435,7 +478,7 @@ int main(int argc, const char *argv[]) {
 #endif
 
   vector<int> res = add_off_tree_edges(M, new_tree, tree_edges, off_tree_edges,
-                                       tree_unweighted_depth);
+                                       tree_unweighted_depth, pre_bfs_res);
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +
                                      (end.tv_usec - start.tv_usec) / 1000.0);
