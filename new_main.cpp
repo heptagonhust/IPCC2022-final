@@ -27,8 +27,12 @@ struct Edge {
   bool operator<(const Edge &rhs) const { return this->weight > rhs.weight; }
 };
 
+struct QueueEntry {
+  int node, layer, predecessor;
+};
+
 struct NodeBfsResult {
-  vector<int> nodes;
+  vector<QueueEntry> elems;
   vector<int> layer_indices;
 };
 
@@ -221,34 +225,29 @@ vector<OptionalBfsResult> preprocess_bfs(const int node_cnt,
   }
   sort(bfs_depth.begin(), bfs_depth.end(), std::greater<>());
 
-  const auto bfs = [&tree, &tree_edges](int p, int depth, NodeBfsResult &res) {
-    vector<int> predecessor{};
-    vector<int> layer{};
-    predecessor.push_back(-1);
-    res.nodes.push_back(p);
+  auto bfs = [&tree, &tree_edges](const int &start, const int &depth,
+                                  NodeBfsResult &res) {
+    res.elems.push_back({start, 0, -1});
     res.layer_indices.push_back(1);
-    layer.push_back(0);
-    for (int cur_node_index = 0; cur_node_index < res.nodes.size();
-         cur_node_index++) {
-      int cur_node = res.nodes[cur_node_index];
-      int cur_layer = layer[cur_node_index];
+    for (int idx = 0; idx < res.elems.size(); idx++) {
+      int cur_node = res.elems[idx].node;
+      int cur_layer = res.elems[idx].layer;
+      int cur_pre = res.elems[idx].predecessor;
       if (cur_layer > res.layer_indices.size()) {
-        res.layer_indices.push_back(cur_node_index);
+        res.layer_indices.push_back(idx);
       }
       if (cur_layer == depth) {
-        continue;
+        break;
       }
-      for (const auto &j : tree[cur_node]) {
+      for (auto &j : tree[cur_node]) {
         const Edge &e = tree_edges[j];
         int v = cur_node ^ e.a ^ e.b;
-        if (v != predecessor[cur_node_index]) {
-          res.nodes.push_back(v);
-          predecessor.push_back(cur_node);
-          layer.push_back(cur_layer + 1);
+        if (v != cur_pre) {
+          res.elems.push_back({v, cur_layer + 1, cur_node});
         }
       }
     }
-    res.layer_indices.push_back(res.nodes.size());
+    res.layer_indices.push_back(res.elems.size());
   };
   const int bfs_node_cnt = node_cnt * 0.3;
 #pragma omp parallel for schedule(dynamic) num_threads(32)
@@ -267,9 +266,6 @@ vector<int> add_off_tree_edges(const int node_cnt,
                                const vector<Edge> &off_tree_edges,
                                const vector<int> &depth,
                                const vector<OptionalBfsResult> &pre_bfs_res) {
-  struct QueueEntry {
-    int node, layer, predecessor;
-  };
   ScopeTimer t_("add_off_tree_edges");
   vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
   for (int i = 0; i < off_tree_edges.size(); ++i) {
@@ -298,29 +294,8 @@ vector<int> add_off_tree_edges(const int node_cnt,
     printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
 #endif
 
-    auto beta_layer_bfs_1 = [&tree, &tree_edges,
-                             beta](int start, vector<QueueEntry> &q) -> int {
-      int rear = 0;
-      q[rear++] = {start, 0, -1};
-      for (int idx = 0; idx < rear; idx++) {
-        int cur_node = q[idx].node;
-        int cur_layer = q[idx].layer;
-        int cur_pre = q[idx].predecessor;
-        if (cur_layer == beta) {
-          continue;
-        }
-        for (auto &j : tree[cur_node]) {
-          const Edge &e = tree_edges[j];
-          int v = cur_node ^ e.a ^ e.b;
-          if (cur_pre != v) {
-            q[rear++] = {v, cur_layer + 1, cur_node};
-          }
-        }
-      }
-      return rear;
-    };
-    auto beta_layer_bfs_2 = [&tree, &tree_edges,
-                             beta](int start, vector<QueueEntry> &q) -> int {
+    auto beta_layer_bfs = [&tree, &tree_edges,
+                           beta](int start, vector<QueueEntry> &q) -> int {
       int rear = 0;
       q[rear++] = {start, 0, -1};
       for (int idx = 0; idx < rear; idx++) {
@@ -341,48 +316,33 @@ vector<int> add_off_tree_edges(const int node_cnt,
       }
       return rear;
     };
+
     vector<int> ban_edges{};
     int size1, size2;
-    vector<int> buffer1{}, buffer2{};
+    const vector<QueueEntry> *buffer1{}, *buffer2{};
 
     if (pre_bfs_res[e.a] != nullopt) {
-      size1 = pre_bfs_res[e.a]->layer_indices.size() > beta
-                  ? pre_bfs_res[e.a]->layer_indices[beta]
-                  : pre_bfs_res[e.a]->nodes.size();
-      buffer1.resize(size1);
-      for (int idx = 0; idx < size1; idx++) {
-        buffer1[idx] = pre_bfs_res[e.a]->nodes[idx];
-      }
+      size1 = pre_bfs_res[e.a]->layer_indices[beta];
+      buffer1 = &pre_bfs_res[e.a]->elems;
     } else {
-      size1 = beta_layer_bfs_1(e.a, q1);
-      buffer1.resize(size1);
-      for (int idx = 0; idx < size1; idx++) {
-        buffer1[idx] = q1[idx].node;
-      }
+      size1 = beta_layer_bfs(e.a, q1);
+      buffer1 = &q1;
     }
 
     for (int idx = 0; idx < size1; idx++) {
-      black_list1[buffer1[idx]] = true;
+      black_list1[buffer1->at(idx).node] = true;
     }
 
     if (pre_bfs_res[e.b] != nullopt) {
-      size2 = pre_bfs_res[e.b]->layer_indices.size() > beta
-                  ? pre_bfs_res[e.b]->layer_indices[beta]
-                  : pre_bfs_res[e.b]->nodes.size();
-      buffer2.resize(size2);
-      for (int idx = 0; idx < size2; idx++) {
-        buffer2[idx] = pre_bfs_res[e.b]->nodes[idx];
-      }
+      size2 = pre_bfs_res[e.b]->layer_indices[beta];
+      buffer2 = &pre_bfs_res[e.b]->elems;
     } else {
-      size2 = beta_layer_bfs_2(e.b, q2);
-      buffer2.resize(size2);
-      for (int idx = 0; idx < size2; idx++) {
-        buffer2[idx] = q2[idx].node;
-      }
+      size2 = beta_layer_bfs(e.b, q2);
+      buffer2 = &q2;
     }
 
     for (int idx = 0; idx < size2; idx++) {
-      int cur_node = buffer2[idx];
+      int cur_node = buffer2->at(idx).node;
       for (auto &j : rebuilt_off_tree_graph[cur_node]) {
         const Edge &e = off_tree_edges[j];
         int v = cur_node ^ e.a ^ e.b;
@@ -392,8 +352,8 @@ vector<int> add_off_tree_edges(const int node_cnt,
       }
     }
 
-    for (int j = 0; j < size1; j++) {
-      black_list1[buffer1[j]] = false;
+    for (int idx = 0; idx < size1; idx++) {
+      black_list1[buffer1->at(idx).node] = false;
     }
 
     mark_ban_edges(ban, ban_edges);
