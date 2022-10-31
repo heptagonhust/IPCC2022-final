@@ -4,7 +4,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <execution>
 #include <fstream>
 #include <iostream>
 #include <math.h>
@@ -91,7 +90,7 @@ struct UnionFindSet {
 void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
              vector<Edge> &off_tree_edges) {
   ScopeTimer t_("kruskal");
-  stable_sort(std::execution::par_unseq, edges.begin(), edges.end());
+  stable_sort(edges.begin(), edges.end());
   tree_edges.reserve(node_cnt - 1);
   off_tree_edges.reserve(edges.size() - (node_cnt - 1));
   UnionFindSet ufs(node_cnt + 1);
@@ -182,7 +181,7 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
     printf("%d %d %lf %lf\n", x.a, x.b, x.weight, x.origin_weight);
   }
 #endif
-  stable_sort(std::execution::par_unseq, edges.begin(), edges.end());
+  stable_sort(edges.begin(), edges.end());
 }
 
 void mark_ban_edges(vector<bool> &ban, const vector<int> &ban_edges) {
@@ -193,6 +192,11 @@ void mark_ban_edges(vector<bool> &ban, const vector<int> &ban_edges) {
 struct QueueEntry {
   int node, layer, predecessor;
 };
+
+extern "C" __attribute__((noinline)) void magic_trace_stop_indicator() {
+  asm volatile("" ::: "memory");
+}
+
 int beta_layer_bfs_1(int start, vector<QueueEntry> &q,
                      const vector<vector<int>> &tree,
                      const vector<Edge> &tree_edges, vector<bool> &black_list1,
@@ -290,7 +294,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
       black_list1[q1[j].node] = false;
     }
   }
-
+  magic_trace_stop_indicator();
   return edges_to_be_add;
 }
 
