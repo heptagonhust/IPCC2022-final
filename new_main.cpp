@@ -249,9 +249,8 @@ vector<int> add_off_tree_edges(const int node_cnt,
       return rear;
     };
     auto beta_layer_bfs_2 = [&tree, &tree_edges, &off_tree_edges,
-                             &rebuilt_off_tree_graph, &black_list1,
-                             beta](int start, vector<QueueEntry> &q,
-                                   vector<int> &ban_edges) -> int {
+                             &rebuilt_off_tree_graph, &black_list1, &ban,
+                             beta](int start, vector<QueueEntry> &q) -> int {
       int rear = 0;
       q[rear++] = {start, 0, -1};
       for (int idx = 0; idx < rear; idx++) {
@@ -262,7 +261,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
           const Edge &e = off_tree_edges[j];
           int v = cur_node ^ e.a ^ e.b;
           if (black_list1[v]) {
-            ban_edges.push_back(j);
+            ban[j] = 1;
           }
         }
         if (cur_layer == beta) {
@@ -278,14 +277,11 @@ vector<int> add_off_tree_edges(const int node_cnt,
       }
       return rear;
     };
-    vector<int> ban_edges{};
     int size1 = beta_layer_bfs_1(e.a, q1);
-    beta_layer_bfs_2(e.b, q2, ban_edges);
+    beta_layer_bfs_2(e.b, q2);
     for (int j = 0; j < size1; j++) {
       black_list1[q1[j].node] = false;
     }
-
-    mark_ban_edges(ban, ban_edges);
   }
 
   return edges_to_be_add;
