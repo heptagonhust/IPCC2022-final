@@ -190,15 +190,73 @@ void mark_ban_edges(vector<bool> &ban, const vector<int> &ban_edges) {
     ban[x] = true;
   }
 }
+struct QueueEntry {
+  int node, layer, predecessor;
+};
+int beta_layer_bfs_1(int start, vector<QueueEntry> &q,
+                     const vector<vector<int>> &tree,
+                     const vector<Edge> &tree_edges, vector<bool> &black_list1,
+                     int beta) {
+  int rear = 0;
+  q[rear++] = {start, 0, -1};
+  for (int idx = 0; idx < rear; idx++) {
+    int cur_node = q[idx].node;
+    int cur_layer = q[idx].layer;
+    int cur_pre = q[idx].predecessor;
+    black_list1[cur_node] = true;
+    if (cur_layer == beta) {
+      continue;
+    }
+    for (auto &j : tree[cur_node]) {
+      const Edge &e = tree_edges[j];
+      int v = cur_node ^ e.a ^ e.b;
+      if (cur_pre != v) {
+        q[rear++] = {v, cur_layer + 1, cur_node};
+      }
+    }
+  }
+  return rear;
+}
+
+int beta_layer_bfs_2(int start, vector<QueueEntry> &q,
+                     const vector<vector<int>> &tree,
+                     const vector<Edge> &tree_edges,
+                     const vector<vector<int>> &rebuilt_off_tree_graph,
+                     const vector<Edge> &off_tree_edges,
+                     vector<bool> &black_list1, int beta, vector<bool> &ban) {
+  int rear = 0;
+  q[rear++] = {start, 0, -1};
+  for (int idx = 0; idx < rear; idx++) {
+    int cur_node = q[idx].node;
+    int cur_layer = q[idx].layer;
+    int cur_pre = q[idx].predecessor;
+    for (auto &j : rebuilt_off_tree_graph[cur_node]) {
+      const Edge &e = off_tree_edges[j];
+      int v = cur_node ^ e.a ^ e.b;
+      if (black_list1[v]) {
+        ban[j] = 1;
+      }
+    }
+    if (cur_layer == beta) {
+      continue;
+    }
+    for (auto &j : tree[cur_node]) {
+      const Edge &e = tree_edges[j];
+      int v = cur_node ^ e.a ^ e.b;
+      if (v != cur_pre) {
+        q[rear++] = {v, cur_layer + 1, cur_node};
+      }
+    }
+  }
+  return rear;
+}
 
 vector<int> add_off_tree_edges(const int node_cnt,
                                const vector<vector<int>> &tree,
                                const vector<Edge> &tree_edges,
                                const vector<Edge> &off_tree_edges,
                                const vector<int> &depth) {
-  struct QueueEntry {
-    int node, layer, predecessor;
-  };
+
   ScopeTimer t_("add_off_tree_edges");
   vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
   for (int i = 0; i < off_tree_edges.size(); ++i) {
@@ -225,60 +283,9 @@ vector<int> add_off_tree_edges(const int node_cnt,
 #ifdef DEBUG
     printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
 #endif
-
-    auto beta_layer_bfs_1 = [&tree, &tree_edges, &black_list1,
-                             beta](int start, vector<QueueEntry> &q) -> int {
-      int rear = 0;
-      q[rear++] = {start, 0, -1};
-      for (int idx = 0; idx < rear; idx++) {
-        int cur_node = q[idx].node;
-        int cur_layer = q[idx].layer;
-        int cur_pre = q[idx].predecessor;
-        black_list1[cur_node] = true;
-        if (cur_layer == beta) {
-          continue;
-        }
-        for (auto &j : tree[cur_node]) {
-          const Edge &e = tree_edges[j];
-          int v = cur_node ^ e.a ^ e.b;
-          if (cur_pre != v) {
-            q[rear++] = {v, cur_layer + 1, cur_node};
-          }
-        }
-      }
-      return rear;
-    };
-    auto beta_layer_bfs_2 = [&tree, &tree_edges, &off_tree_edges,
-                             &rebuilt_off_tree_graph, &black_list1, &ban,
-                             beta](int start, vector<QueueEntry> &q) -> int {
-      int rear = 0;
-      q[rear++] = {start, 0, -1};
-      for (int idx = 0; idx < rear; idx++) {
-        int cur_node = q[idx].node;
-        int cur_layer = q[idx].layer;
-        int cur_pre = q[idx].predecessor;
-        for (auto &j : rebuilt_off_tree_graph[cur_node]) {
-          const Edge &e = off_tree_edges[j];
-          int v = cur_node ^ e.a ^ e.b;
-          if (black_list1[v]) {
-            ban[j] = 1;
-          }
-        }
-        if (cur_layer == beta) {
-          continue;
-        }
-        for (auto &j : tree[cur_node]) {
-          const Edge &e = tree_edges[j];
-          int v = cur_node ^ e.a ^ e.b;
-          if (v != cur_pre) {
-            q[rear++] = {v, cur_layer + 1, cur_node};
-          }
-        }
-      }
-      return rear;
-    };
-    int size1 = beta_layer_bfs_1(e.a, q1);
-    beta_layer_bfs_2(e.b, q2);
+    int size1 = beta_layer_bfs_1(e.a, q1, tree, tree_edges, black_list1, beta);
+    beta_layer_bfs_2(e.b, q2, tree, tree_edges, rebuilt_off_tree_graph,
+                     off_tree_edges, black_list1, beta, ban);
     for (int j = 0; j < size1; j++) {
       black_list1[q1[j].node] = false;
     }
