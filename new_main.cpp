@@ -199,8 +199,7 @@ extern "C" __attribute__((noinline)) void magic_trace_stop_indicator() {
 }
 
 int beta_layer_bfs_1(int start, vector<QueueEntry> &q,
-                     const vector<vector<int>> &tree,
-                     const vector<Edge> &tree_edges, vector<bool> &black_list1,
+                     const vector<vector<int>> &tree, vector<bool> &black_list1,
                      int beta) {
   int rear = 0;
   q[rear++] = {start, 0, -1};
@@ -212,9 +211,8 @@ int beta_layer_bfs_1(int start, vector<QueueEntry> &q,
     if (cur_layer == beta) {
       continue;
     }
-    for (auto &j : tree[cur_node]) {
-      const Edge &e = tree_edges[j];
-      int v = cur_node ^ e.a ^ e.b;
+    for (int j = 0; j < tree[cur_node].size(); ++j) {
+      int v = tree[cur_node][j];
       if (cur_pre != v) {
         q[rear++] = {v, cur_layer + 1, cur_node};
       }
@@ -227,7 +225,6 @@ const auto pair_hash = [](const std::pair<int, int> &p) {
 };
 int beta_layer_bfs_2(
     int start, vector<QueueEntry> &q, const vector<vector<int>> &tree,
-    const vector<Edge> &tree_edges,
     const vector<vector<int>> &rebuilt_off_tree_graph,
     vector<bool> &black_list1, int beta,
     unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges,
@@ -242,22 +239,22 @@ int beta_layer_bfs_2(
     int cur_node = q[idx].node;
     int cur_layer = q[idx].layer;
     int cur_pre = q[idx].predecessor;
-    for (auto &j : rebuilt_off_tree_graph[cur_node]) {
-      if (black_list1[j]) {
+    for (int j = 0; j < rebuilt_off_tree_graph[cur_node].size(); ++j) {
+      int v = rebuilt_off_tree_graph[cur_node][j];
+      if (black_list1[v]) {
         if (banned_nodes[cur_node] == 0 &&
-            banned_nodes[cur_node] == banned_nodes[j]) {
-          banned_nodes[cur_node] = banned_nodes[j] = id++;
+            banned_nodes[cur_node] == banned_nodes[v]) {
+          banned_nodes[cur_node] = banned_nodes[v] = id++;
         } else {
-          banned_edges.insert({min(cur_node, j), max(cur_node, j)});
+          banned_edges.insert({min(cur_node, v), max(cur_node, v)});
         }
       }
     }
     if (cur_layer == beta) {
       continue;
     }
-    for (auto &j : tree[cur_node]) {
-      const Edge &e = tree_edges[j];
-      int v = cur_node ^ e.a ^ e.b;
+    for (int j = 0; j < tree[cur_node].size(); ++j) {
+      int v = tree[cur_node][j];
       if (v != cur_pre) {
         q[rear++] = {v, cur_layer + 1, cur_node};
       }
@@ -274,10 +271,16 @@ vector<int> add_off_tree_edges(const int node_cnt,
 
   ScopeTimer t_("add_off_tree_edges");
   vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
+  vector<vector<int>> rebuilt_tree_graph(node_cnt + 1);
   for (int i = 0; i < off_tree_edges.size(); ++i) {
     auto &e = off_tree_edges[i];
     rebuilt_off_tree_graph[e.a].push_back(e.b);
     rebuilt_off_tree_graph[e.b].push_back(e.a);
+  }
+  for (int i = 0; i < tree_edges.size(); ++i) {
+    auto &e = tree_edges[i];
+    rebuilt_tree_graph[e.a].push_back(e.b);
+    rebuilt_tree_graph[e.b].push_back(e.a);
   }
   vector<int> edges_to_be_add;
   vector<bool> black_list1(node_cnt + 1, false);
@@ -305,8 +308,9 @@ vector<int> add_off_tree_edges(const int node_cnt,
 #ifdef DEBUG
     printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
 #endif
-    int size1 = beta_layer_bfs_1(e.a, q1, tree, tree_edges, black_list1, beta);
-    beta_layer_bfs_2(e.b, q2, tree, tree_edges, rebuilt_off_tree_graph,
+    int size1 =
+        beta_layer_bfs_1(e.a, q1, rebuilt_tree_graph, black_list1, beta);
+    beta_layer_bfs_2(e.b, q2, rebuilt_tree_graph, rebuilt_off_tree_graph,
                      black_list1, beta, banned_edges, banned_nodes);
     for (int j = 0; j < size1; j++) {
       black_list1[q1[j].node] = false;
