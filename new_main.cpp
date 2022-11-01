@@ -189,7 +189,12 @@ void mark_ban_edges(vector<bool> &ban, const vector<int> &ban_edges) {
   }
 }
 
-constexpr int batch = 1;
+extern "C" __attribute__((noinline)) void magic_trace_stop_indicator() {
+  asm volatile("" ::: "memory");
+}
+
+constexpr int batch = 4;
+constexpr int nthreads = 2;
 
 vector<int> add_off_tree_edges(const int node_cnt,
                                const vector<vector<int>> &tree,
@@ -217,7 +222,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
     }
     int batch_size = batch_end - b;
     vector<vector<int>> ban_buffers(batch_size);
-// #pragma omp parallel for num_threads(32) schedule(dynamic)
+#pragma omp parallel for num_threads(nthreads) 
     for (int i = b; i < batch_end; i++) {
       if (ban[i]) {
         continue;
@@ -295,6 +300,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
     }
   }
   edges_to_be_add.resize(alpha);
+  magic_trace_stop_indicator();
   return edges_to_be_add;
 }
 
