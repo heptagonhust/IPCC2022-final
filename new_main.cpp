@@ -11,6 +11,7 @@
 #include <stack>
 #include <string>
 #include <sys/time.h>
+#include <unordered_set>
 #include <vector>
 
 using namespace std;
@@ -221,13 +222,20 @@ int beta_layer_bfs_1(int start, vector<QueueEntry> &q,
   }
   return rear;
 }
-
-int beta_layer_bfs_2(int start, vector<QueueEntry> &q,
-                     const vector<vector<int>> &tree,
-                     const vector<Edge> &tree_edges,
-                     const vector<vector<int>> &rebuilt_off_tree_graph,
-                     const vector<Edge> &off_tree_edges,
-                     vector<bool> &black_list1, int beta, vector<bool> &ban) {
+const auto pair_hash = [](const std::pair<int, int> &p) {
+  return p.first * 31 + p.second;
+};
+int beta_layer_bfs_2(
+    int start, vector<QueueEntry> &q, const vector<vector<int>> &tree,
+    const vector<Edge> &tree_edges,
+    const vector<vector<int>> &rebuilt_off_tree_graph,
+    vector<bool> &black_list1, int beta,
+    unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges,
+    vector<unsigned short> &banned_nodes) {
+  static unsigned short id = 1;
+  if (id == 0) {
+    id++;
+  }
   int rear = 0;
   q[rear++] = {start, 0, -1};
   for (int idx = 0; idx < rear; idx++) {
@@ -235,10 +243,13 @@ int beta_layer_bfs_2(int start, vector<QueueEntry> &q,
     int cur_layer = q[idx].layer;
     int cur_pre = q[idx].predecessor;
     for (auto &j : rebuilt_off_tree_graph[cur_node]) {
-      const Edge &e = off_tree_edges[j];
-      int v = cur_node ^ e.a ^ e.b;
-      if (black_list1[v]) {
-        ban[j] = 1;
+      if (black_list1[j]) {
+        if (banned_nodes[cur_node] == 0 &&
+            banned_nodes[cur_node] == banned_nodes[j]) {
+          banned_nodes[cur_node] = banned_nodes[j] = id++;
+        } else {
+          banned_edges.insert({min(cur_node, j), max(cur_node, j)});
+        }
       }
     }
     if (cur_layer == beta) {
@@ -265,12 +276,14 @@ vector<int> add_off_tree_edges(const int node_cnt,
   vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
   for (int i = 0; i < off_tree_edges.size(); ++i) {
     auto &e = off_tree_edges[i];
-    rebuilt_off_tree_graph[e.a].push_back(i);
-    rebuilt_off_tree_graph[e.b].push_back(i);
+    rebuilt_off_tree_graph[e.a].push_back(e.b);
+    rebuilt_off_tree_graph[e.b].push_back(e.a);
   }
   vector<int> edges_to_be_add;
-  vector<bool> ban(off_tree_edges.size());
   vector<bool> black_list1(node_cnt + 1, false);
+  vector<unsigned short> banned_nodes(node_cnt + 1, 0);
+  unordered_set<pair<int, int>, decltype(pair_hash)> banned_edges(1024,
+                                                                  pair_hash);
   vector<QueueEntry> q1(node_cnt), q2(node_cnt);
 
   int alpha = max(int(off_tree_edges.size() / 25), 2);
@@ -278,10 +291,15 @@ vector<int> add_off_tree_edges(const int node_cnt,
     if (edges_to_be_add.size() == alpha) {
       break;
     }
-    if (ban[i]) {
+    auto &e = off_tree_edges[i];
+    if (banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) {
       continue;
     }
-    auto &e = off_tree_edges[i];
+    if ((banned_nodes[e.a] != 0 || banned_nodes[e.b] != 0) &&
+        banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) !=
+            banned_edges.end()) {
+      continue;
+    }
     edges_to_be_add.push_back(i);
     int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
 #ifdef DEBUG
@@ -289,7 +307,7 @@ vector<int> add_off_tree_edges(const int node_cnt,
 #endif
     int size1 = beta_layer_bfs_1(e.a, q1, tree, tree_edges, black_list1, beta);
     beta_layer_bfs_2(e.b, q2, tree, tree_edges, rebuilt_off_tree_graph,
-                     off_tree_edges, black_list1, beta, ban);
+                     black_list1, beta, banned_edges, banned_nodes);
     for (int j = 0; j < size1; j++) {
       black_list1[q1[j].node] = false;
     }
