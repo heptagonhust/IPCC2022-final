@@ -36,6 +36,40 @@ template <typename T> struct CSRMatrix {
       : row_indices(new T[matrix_dim + 1]), neighbors(new T[nonzero_count]) {}
 };
 
+template <bool use_edge_list = false>
+CSRMatrix<int> build_csr_matrix(const int &node_cnt,
+                                const vector<Edge> &edges) {
+  vector<int> deg(node_cnt + 1);
+  for (auto &e : edges) {
+    deg[e.a]++;
+    deg[e.b]++;
+  }
+  auto mat = CSRMatrix<int>(node_cnt + 1, edges.size() * 2);
+  int start_idx = 0;
+  for (int i = 1; i <= node_cnt; i++) {
+    mat.row_indices[i] = start_idx;
+    start_idx += deg[i];
+  }
+  mat.row_indices[0] = 0;
+  mat.row_indices[node_cnt + 1] = start_idx;
+  for (int i = 0; i < edges.size(); ++i) {
+    const auto &e = edges[i];
+    if constexpr (use_edge_list) {
+      mat.neighbors[mat.row_indices[e.a]] = i;
+      mat.neighbors[mat.row_indices[e.b]] = i;
+    } else {
+      mat.neighbors[mat.row_indices[e.a]] = e.b;
+      mat.neighbors[mat.row_indices[e.b]] = e.a;
+    }
+    mat.row_indices[e.a]++;
+    mat.row_indices[e.b]++;
+  }
+  for (int i = node_cnt; i >= 1; i--) {
+    mat.row_indices[i] = mat.row_indices[i - 1];
+  }
+  return mat;
+}
+
 int largest_volume_node(const vector<double> &volume) {
   ScopeTimer t_("largest_volume_node");
   return max_element(volume.begin(), volume.end()) - volume.begin();
@@ -122,27 +156,20 @@ void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
   }
 }
 
-vector<vector<int>> rebuild_tree(int node_cnt, const vector<Edge> &tree) {
+CSRMatrix<int> rebuild_tree(int node_cnt, const vector<Edge> &tree) {
   ScopeTimer t_("rebuild_tree");
-  vector<vector<int>> res(node_cnt + 1);
-  for (int i = 0; i < tree.size(); ++i) {
-    auto &e = tree[i];
-    res[e.a].push_back(i);
-    res[e.b].push_back(i);
-  }
-  return res;
+  return build_csr_matrix</* use_edge_list */ true>(node_cnt, tree);
 }
 
-void tarjan_lca_impl(const vector<vector<int>> &tree,
-                     const vector<Edge> &tree_edges,
-                     const vector<vector<int>> &query_indices,
+void tarjan_lca_impl(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
+                     const CSRMatrix<int> &query_indices,
                      vector<Edge> &query_info, int cur, UnionFindSet &ufs,
                      vector<bool> &vis, vector<double> &weighted_depth,
                      vector<int> &unweighted_depth) {
   ufs.fa[cur] = cur;
   vis[cur] = 1;
-  for (int i = 0; i < tree[cur].size(); ++i) {
-    const Edge &e = tree_edges[tree[cur][i]];
+  for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
+    const Edge &e = tree_edges[tree.neighbors[i]];
     int v = cur ^ e.a ^ e.b;
     if (!vis[v]) {
       weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
@@ -152,29 +179,25 @@ void tarjan_lca_impl(const vector<vector<int>> &tree,
       ufs.fa[v] = cur;
     }
   }
-  for (int i = 0; i < query_indices[cur].size(); ++i) {
-    const Edge &e = query_info[query_indices[cur][i]];
+  for (int i = query_indices.row_indices[cur];
+       i < query_indices.row_indices[cur + 1]; ++i) {
+    Edge &e = query_info[query_indices.neighbors[i]];
     int v = cur ^ e.a ^ e.b;
     if (vis[v]) {
-      query_info[query_indices[cur][i]].lca = ufs.find_fa(v);
+      e.lca = ufs.find_fa(v);
     }
   }
 }
 
-void tarjan_lca(const vector<vector<int>> &tree, const vector<Edge> &tree_edges,
+void tarjan_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
                 vector<Edge> &query_info, int root, int node_cnt,
                 vector<double> &weighted_depth, vector<int> &unweighted_depth) {
   ScopeTimer t_("tarjan_lca");
   UnionFindSet ufs(node_cnt + 1);
   vector<bool> vis(node_cnt + 1);
-  vector<vector<int>> query_indices(node_cnt + 1);
   weighted_depth.resize(node_cnt + 1, 0);
   unweighted_depth.resize(node_cnt + 1, 0);
-  for (int i = 0; i < query_info.size(); ++i) {
-    auto &e = query_info[i];
-    query_indices[e.a].push_back(i);
-    query_indices[e.b].push_back(i);
-  }
+  auto query_indices = build_csr_matrix<true>(node_cnt, query_info);
   tarjan_lca_impl(tree, tree_edges, query_indices, query_info, root, ufs, vis,
                   weighted_depth, unweighted_depth);
 }
@@ -272,42 +295,8 @@ int beta_layer_bfs_2(
   }
   return rear;
 }
-template <bool use_edge_list = false>
-CSRMatrix<int> build_csr_matrix(const int &node_cnt,
-                                const vector<Edge> &edges) {
-  vector<int> deg(node_cnt + 1);
-  for (auto &e : edges) {
-    deg[e.a]++;
-    deg[e.b]++;
-  }
-  auto mat = CSRMatrix<int>(node_cnt + 1, edges.size() * 2);
-  int start_idx = 0;
-  for (int i = 1; i <= node_cnt; i++) {
-    mat.row_indices[i] = start_idx;
-    start_idx += deg[i];
-  }
-  mat.row_indices[0] = 0;
-  mat.row_indices[node_cnt + 1] = start_idx;
-  for (int i = 0; i < edges.size(); ++i) {
-    const auto &e = edges[i];
-    if constexpr (use_edge_list) {
-      mat.neighbors[mat.row_indices[e.a]] = i;
-      mat.neighbors[mat.row_indices[e.b]] = i;
-    } else {
-      mat.neighbors[mat.row_indices[e.a]] = e.b;
-      mat.neighbors[mat.row_indices[e.b]] = e.a;
-    }
-    mat.row_indices[e.a]++;
-    mat.row_indices[e.b]++;
-  }
-  for (int i = node_cnt; i >= 1; i--) {
-    mat.row_indices[i] = mat.row_indices[i - 1];
-  }
-  return mat;
-}
 
 vector<int> add_off_tree_edges(const int node_cnt,
-                               const vector<vector<int>> &tree,
                                const vector<Edge> &tree_edges,
                                const vector<Edge> &off_tree_edges,
                                const vector<int> &depth) {
@@ -435,8 +424,8 @@ int main(int argc, const char *argv[]) {
   }
 #endif
 
-  vector<int> res = add_off_tree_edges(M, new_tree, tree_edges, off_tree_edges,
-                                       tree_unweighted_depth);
+  vector<int> res =
+      add_off_tree_edges(M, tree_edges, off_tree_edges, tree_unweighted_depth);
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +
                                      (end.tv_usec - start.tv_usec) / 1000.0);
