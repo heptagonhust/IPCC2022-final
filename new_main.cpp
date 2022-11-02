@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <math.h>
+#include <memory>
 #include <queue>
 #include <stack>
 #include <string>
@@ -199,31 +200,11 @@ extern "C" __attribute__((noinline)) void magic_trace_stop_indicator() {
 }
 
 struct CSRMatrix {
-  int *rows;
-  int *cols;
+  std::unique_ptr<int[]> rows;
+  std::unique_ptr<int[]> cols;
 
-  CSRMatrix(const int &n, const int &m) {
-    rows = new int[n + 1];
-    cols = new int[m];
-  }
-
-  CSRMatrix(CSRMatrix &&B) {
-    rows = B.rows;
-    cols = B.cols;
-    B.rows = nullptr;
-    B.cols = nullptr;
-  }
-
-  CSRMatrix(const CSRMatrix &B) = delete;
-
-  ~CSRMatrix() {
-    if (rows != nullptr) {
-      delete[] rows;
-    }
-    if (cols != nullptr) {
-      delete[] cols;
-    }
-  }
+  CSRMatrix(const int &n, const int &m)
+      : rows(new int[n + 1]), cols(new int[m]) {}
 };
 
 int beta_layer_bfs_1(int start, vector<QueueEntry> &q, const CSRMatrix &tree,
