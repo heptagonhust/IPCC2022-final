@@ -161,34 +161,6 @@ CSRMatrix<int> rebuild_tree(int node_cnt, const vector<Edge> &tree) {
   return build_csr_matrix</* use_edge_list */ true>(node_cnt, tree);
 }
 
-void tarjan_lca_impl(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
-                     const CSRMatrix<int> &query_indices,
-                     vector<Edge> &query_info, int cur, UnionFindSet &ufs,
-                     vector<bool> &vis, vector<double> &weighted_depth,
-                     vector<int> &unweighted_depth) {
-  ufs.fa[cur] = cur;
-  vis[cur] = 1;
-  for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
-    const Edge &e = tree_edges[tree.neighbors[i]];
-    int v = cur ^ e.a ^ e.b;
-    if (!vis[v]) {
-      weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
-      unweighted_depth[v] = 1 + unweighted_depth[cur];
-      tarjan_lca_impl(tree, tree_edges, query_indices, query_info, v, ufs, vis,
-                      weighted_depth, unweighted_depth);
-      ufs.fa[v] = cur;
-    }
-  }
-  for (int i = query_indices.row_indices[cur];
-       i < query_indices.row_indices[cur + 1]; ++i) {
-    Edge &e = query_info[query_indices.neighbors[i]];
-    int v = cur ^ e.a ^ e.b;
-    if (vis[v]) {
-      e.lca = ufs.find_fa(v);
-    }
-  }
-}
-
 void tarjan_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
                 vector<Edge> &query_info, int root, int node_cnt,
                 vector<double> &weighted_depth, vector<int> &unweighted_depth) {
@@ -198,8 +170,59 @@ void tarjan_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
   weighted_depth.resize(node_cnt + 1, 0);
   unweighted_depth.resize(node_cnt + 1, 0);
   auto query_indices = build_csr_matrix<true>(node_cnt, query_info);
-  tarjan_lca_impl(tree, tree_edges, query_indices, query_info, root, ufs, vis,
-                  weighted_depth, unweighted_depth);
+  struct StackItem {
+    int cur_node; // the node of current stack frame
+    int i; // the loop index of current stack frame. i < 0 means that it is the
+           // first iteration
+  };
+  vector<StackItem> stack;
+  stack.push_back({root, -1});
+  while (!stack.empty()) {
+    auto &item = *stack.rbegin();
+    int cur = item.cur_node;
+    if (item.i < 0) {
+      ufs.fa[cur] = cur;
+      vis[cur] = 1;
+      for (item.i = tree.row_indices[cur]; item.i < tree.row_indices[cur + 1];
+           ++item.i) {
+        const Edge &e = tree_edges[tree.neighbors[item.i]];
+        int v = cur ^ e.a ^ e.b;
+        if (!vis[v]) {
+          weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
+          unweighted_depth[v] = 1 + unweighted_depth[cur];
+          stack.push_back({v, -1});
+          goto loop_end;
+        }
+      }
+    } else {
+      if (item.i < tree.row_indices[cur + 1]) {
+        const Edge &e = tree_edges[tree.neighbors[item.i]];
+        int v = cur ^ e.a ^ e.b;
+        ufs.fa[v] = cur;
+        item.i++;
+        for (; item.i < tree.row_indices[cur + 1]; ++item.i) {
+          const Edge &e = tree_edges[tree.neighbors[item.i]];
+          int v = cur ^ e.a ^ e.b;
+          if (!vis[v]) {
+            weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
+            unweighted_depth[v] = 1 + unweighted_depth[cur];
+            stack.push_back({v, -1});
+            goto loop_end;
+          }
+        }
+      }
+      for (int i = query_indices.row_indices[cur];
+           i < query_indices.row_indices[cur + 1]; ++i) {
+        Edge &e = query_info[query_indices.neighbors[i]];
+        int v = cur ^ e.a ^ e.b;
+        if (vis[v]) {
+          e.lca = ufs.find_fa(v);
+        }
+      }
+      stack.pop_back();
+    }
+  loop_end:;
+  }
 }
 
 void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
