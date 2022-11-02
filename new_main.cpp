@@ -33,7 +33,7 @@ template <typename T> struct CSRMatrix {
   std::unique_ptr<T[]> neighbors;
 
   CSRMatrix(const int &matrix_dim, const int &nonzero_count)
-      : row_indices(new T[matrix_dim]), neighbors(new T[nonzero_count]) {}
+      : row_indices(new T[matrix_dim + 1]), neighbors(new T[nonzero_count]) {}
 };
 
 int largest_volume_node(const vector<double> &volume) {
