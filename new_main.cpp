@@ -60,7 +60,7 @@ vector<Edge> get_new_edges(const vector<Edge> &edges, const vector<int> &deg,
                            const vector<int> &unweighted_distance) {
   ScopeTimer t_("get_new_edges");
   vector<Edge> res(edges.size());
-#pragma omp parallel for
+// #pragma omp parallel for
   for (int i = 0; i < edges.size(); ++i) {
     res[i].a = edges[i].a;
     res[i].b = edges[i].b;
@@ -171,7 +171,7 @@ void tarjan_lca(const vector<vector<int>> &tree, const vector<Edge> &tree_edges,
 
 void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
   ScopeTimer t_("sort_off_tree_edges");
-#pragma omp parallel for
+// #pragma omp parallel for
   for (int i = 0; i < edges.size(); ++i) {
     auto &e = edges[i];
     e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
@@ -198,9 +198,36 @@ extern "C" __attribute__((noinline)) void magic_trace_stop_indicator() {
   asm volatile("" ::: "memory");
 }
 
-int beta_layer_bfs_1(int start, vector<QueueEntry> &q,
-                     const vector<vector<int>> &tree, vector<bool> &black_list1,
-                     int beta) {
+struct CSRMatrix {
+  int *rows;
+  int *cols;
+
+  CSRMatrix(const int &n, const int &m) {
+    rows = new int[n + 1];
+    cols = new int[m];
+  }
+
+  CSRMatrix(CSRMatrix &&B) {
+    rows = B.rows;
+    cols = B.cols;
+    B.rows = nullptr;
+    B.cols = nullptr;
+  }
+
+  CSRMatrix(const CSRMatrix &B) = delete;
+
+  ~CSRMatrix() {
+    if (rows != nullptr) {
+      delete[] rows;
+    }
+    if (cols != nullptr) {
+      delete[] cols;
+    }
+  }
+};
+
+int beta_layer_bfs_1(int start, vector<QueueEntry> &q, const CSRMatrix &tree,
+                     vector<bool> &black_list1, int beta) {
   int rear = 0;
   q[rear++] = {start, 0, -1};
   for (int idx = 0; idx < rear; idx++) {
@@ -211,8 +238,8 @@ int beta_layer_bfs_1(int start, vector<QueueEntry> &q,
     if (cur_layer == beta) {
       continue;
     }
-    for (int j = 0; j < tree[cur_node].size(); ++j) {
-      int v = tree[cur_node][j];
+    for (int j = tree.rows[cur_node]; j < tree.rows[cur_node + 1]; ++j) {
+      int v = tree.cols[j];
       if (cur_pre != v) {
         q[rear++] = {v, cur_layer + 1, cur_node};
       }
@@ -220,13 +247,14 @@ int beta_layer_bfs_1(int start, vector<QueueEntry> &q,
   }
   return rear;
 }
+
 const auto pair_hash = [](const std::pair<int, int> &p) {
   return p.first * 31 + p.second;
 };
+
 int beta_layer_bfs_2(
-    int start, vector<QueueEntry> &q, const vector<vector<int>> &tree,
-    const vector<vector<int>> &rebuilt_off_tree_graph,
-    vector<bool> &black_list1, int beta,
+    int start, vector<QueueEntry> &q, const CSRMatrix &tree,
+    const CSRMatrix &off_tree_graph, vector<bool> &black_list1, int beta,
     unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges,
     vector<unsigned short> &banned_nodes) {
   static unsigned short id = 1;
@@ -239,8 +267,9 @@ int beta_layer_bfs_2(
     int cur_node = q[idx].node;
     int cur_layer = q[idx].layer;
     int cur_pre = q[idx].predecessor;
-    for (int j = 0; j < rebuilt_off_tree_graph[cur_node].size(); ++j) {
-      int v = rebuilt_off_tree_graph[cur_node][j];
+    for (int j = off_tree_graph.rows[cur_node];
+         j < off_tree_graph.rows[cur_node + 1]; ++j) {
+      int v = off_tree_graph.cols[j];
       if (black_list1[v]) {
         if (banned_nodes[cur_node] == 0 &&
             banned_nodes[cur_node] == banned_nodes[v]) {
@@ -253,14 +282,40 @@ int beta_layer_bfs_2(
     if (cur_layer == beta) {
       continue;
     }
-    for (int j = 0; j < tree[cur_node].size(); ++j) {
-      int v = tree[cur_node][j];
+    for (int j = tree.rows[cur_node]; j < tree.rows[cur_node + 1]; ++j) {
+      int v = tree.cols[j];
       if (v != cur_pre) {
         q[rear++] = {v, cur_layer + 1, cur_node};
       }
     }
   }
   return rear;
+}
+
+CSRMatrix build_csr_matrix(const int &node_cnt, const vector<Edge> &edges) {
+  vector<int> deg(node_cnt + 1);
+  for (auto &e : edges) {
+    deg[e.a]++;
+    deg[e.b]++;
+  }
+  auto mat = CSRMatrix(node_cnt + 1, edges.size() * 2);
+  int start_idx = 0;
+  for (int i = 1; i <= node_cnt; i++) {
+    mat.rows[i] = start_idx;
+    start_idx += deg[i];
+  }
+  mat.rows[0] = 0;
+  mat.rows[node_cnt + 1] = start_idx;
+  for (auto &e : edges) {
+    mat.cols[mat.rows[e.a]] = e.b;
+    mat.cols[mat.rows[e.b]] = e.a;
+    mat.rows[e.a]++;
+    mat.rows[e.b]++;
+  }
+  for (int i = node_cnt; i >= 1; i--) {
+    mat.rows[i] = mat.rows[i - 1];
+  }
+  return mat;
 }
 
 vector<int> add_off_tree_edges(const int node_cnt,
@@ -270,18 +325,20 @@ vector<int> add_off_tree_edges(const int node_cnt,
                                const vector<int> &depth) {
 
   ScopeTimer t_("add_off_tree_edges");
-  vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
-  vector<vector<int>> rebuilt_tree_graph(node_cnt + 1);
-  for (int i = 0; i < off_tree_edges.size(); ++i) {
-    auto &e = off_tree_edges[i];
-    rebuilt_off_tree_graph[e.a].push_back(e.b);
-    rebuilt_off_tree_graph[e.b].push_back(e.a);
-  }
-  for (int i = 0; i < tree_edges.size(); ++i) {
-    auto &e = tree_edges[i];
-    rebuilt_tree_graph[e.a].push_back(e.b);
-    rebuilt_tree_graph[e.b].push_back(e.a);
-  }
+  // vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
+  // vector<vector<int>> rebuilt_tree_graph(node_cnt + 1);
+  // for (int i = 0; i < off_tree_edges.size(); ++i) {
+  //   auto &e = off_tree_edges[i];
+  //   rebuilt_off_tree_graph[e.a].push_back(e.b);
+  //   rebuilt_off_tree_graph[e.b].push_back(e.a);
+  // }
+  // for (int i = 0; i < tree_edges.size(); ++i) {
+  //   auto &e = tree_edges[i];
+  //   rebuilt_tree_graph[e.a].push_back(e.b);
+  //   rebuilt_tree_graph[e.b].push_back(e.a);
+  // }
+  auto off_tree_graph = build_csr_matrix(node_cnt, off_tree_edges);
+  auto tree_graph = build_csr_matrix(node_cnt, tree_edges);
   vector<int> edges_to_be_add;
   vector<bool> black_list1(node_cnt + 1, false);
   vector<unsigned short> banned_nodes(node_cnt + 1, 0);
@@ -308,10 +365,9 @@ vector<int> add_off_tree_edges(const int node_cnt,
 #ifdef DEBUG
     printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
 #endif
-    int size1 =
-        beta_layer_bfs_1(e.a, q1, rebuilt_tree_graph, black_list1, beta);
-    beta_layer_bfs_2(e.b, q2, rebuilt_tree_graph, rebuilt_off_tree_graph,
-                     black_list1, beta, banned_edges, banned_nodes);
+    int size1 = beta_layer_bfs_1(e.a, q1, tree_graph, black_list1, beta);
+    beta_layer_bfs_2(e.b, q2, tree_graph, off_tree_graph, black_list1, beta,
+                     banned_edges, banned_nodes);
     for (int j = 0; j < size1; j++) {
       black_list1[q1[j].node] = false;
     }
