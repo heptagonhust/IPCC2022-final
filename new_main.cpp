@@ -42,21 +42,19 @@ int largest_volume_node(const vector<double> &volume) {
 }
 
 vector<int> get_unweighted_distance_bfs(const vector<Edge> &edges,
-                                        const vector<vector<int>> &G,
-                                        int start) {
+                                        const CSRMatrix<int> &G, int start,
+                                        int node_cnt) {
   ScopeTimer t_("get_unweighted_distance_bfs");
-  vector<int> res(G.size());
-  vector<bool> vis(G.size());
+  vector<int> res(node_cnt + 1);
+  vector<bool> vis(node_cnt + 1);
   vis[start] = 1;
   queue<int> q;
   q.push(start);
-  int cnt = 0;
   while (!q.empty()) {
-    cnt++;
     int top = q.front();
     q.pop();
-    for (int i = 0; i < G[top].size(); ++i) {
-      const Edge &e = edges[G[top][i]];
+    for (int i = G.row_indices[top]; i < G.row_indices[top + 1]; ++i) {
+      const Edge &e = edges[G.neighbors[i]];
       int v = top ^ e.a ^ e.b;
       if (!vis[v]) {
         res[v] = res[top] + 1;
@@ -274,7 +272,7 @@ int beta_layer_bfs_2(
   }
   return rear;
 }
-
+template <bool use_edge_list = false>
 CSRMatrix<int> build_csr_matrix(const int &node_cnt,
                                 const vector<Edge> &edges) {
   vector<int> deg(node_cnt + 1);
@@ -290,9 +288,15 @@ CSRMatrix<int> build_csr_matrix(const int &node_cnt,
   }
   mat.row_indices[0] = 0;
   mat.row_indices[node_cnt + 1] = start_idx;
-  for (auto &e : edges) {
-    mat.neighbors[mat.row_indices[e.a]] = e.b;
-    mat.neighbors[mat.row_indices[e.b]] = e.a;
+  for (int i = 0; i < edges.size(); ++i) {
+    const auto &e = edges[i];
+    if constexpr (use_edge_list) {
+      mat.neighbors[mat.row_indices[e.a]] = i;
+      mat.neighbors[mat.row_indices[e.b]] = i;
+    } else {
+      mat.neighbors[mat.row_indices[e.a]] = e.b;
+      mat.neighbors[mat.row_indices[e.b]] = e.a;
+    }
     mat.row_indices[e.a]++;
     mat.row_indices[e.b]++;
   }
@@ -379,9 +383,7 @@ int main(int argc, const char *argv[]) {
   fin >> M >> N >> L;
   // M == N, point cnt
   // L, edge cnt
-  vector<vector<int>> G(M + 1);
   vector<Edge> origin_edges;
-
   vector<int> degree(M + 1);
   vector<double> volume(M + 1);
   for (int i = 0; i < L; ++i) {
@@ -391,14 +393,13 @@ int main(int argc, const char *argv[]) {
     if (f > t) {
       continue;
     }
-    G[f].push_back(origin_edges.size());
-    G[t].push_back(origin_edges.size());
     volume[f] += w;
     volume[t] += w;
     degree[f]++;
     degree[t]++;
     origin_edges.push_back(Edge{f, t, w, w});
   }
+  auto G = build_csr_matrix</* use_edge_list */ true>(M + 1, origin_edges);
   fin.close();
   printf("edge_cnt: %ld\n", origin_edges.size());
   /**************************************************/
@@ -408,7 +409,7 @@ int main(int argc, const char *argv[]) {
   gettimeofday(&start, NULL);
   int r_node = largest_volume_node(volume);
   auto unweighted_distance =
-      get_unweighted_distance_bfs(origin_edges, G, r_node);
+      get_unweighted_distance_bfs(origin_edges, G, r_node, M);
   auto new_edges = get_new_edges(origin_edges, degree, unweighted_distance);
   vector<Edge> tree_edges, off_tree_edges;
   kruskal(M, new_edges, tree_edges, off_tree_edges);
