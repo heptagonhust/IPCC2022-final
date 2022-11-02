@@ -25,6 +25,17 @@ struct Edge {
   bool operator<(const Edge &rhs) const { return this->weight > rhs.weight; }
 };
 
+extern "C" __attribute__((noinline)) void magic_trace_stop_indicator() {
+  asm volatile("" ::: "memory");
+}
+template <typename T> struct CSRMatrix {
+  std::unique_ptr<T[]> row_indices;
+  std::unique_ptr<T[]> neighbors;
+
+  CSRMatrix(const int &matrix_dim, const int &nonzero_count)
+      : row_indices(new T[matrix_dim]), neighbors(new T[nonzero_count]) {}
+};
+
 int largest_volume_node(const vector<double> &volume) {
   ScopeTimer t_("largest_volume_node");
   return max_element(volume.begin(), volume.end()) - volume.begin();
@@ -195,20 +206,9 @@ struct QueueEntry {
   int node, layer, predecessor;
 };
 
-extern "C" __attribute__((noinline)) void magic_trace_stop_indicator() {
-  asm volatile("" ::: "memory");
-}
-
-struct CSRMatrix {
-  std::unique_ptr<int[]> rows;
-  std::unique_ptr<int[]> cols;
-
-  CSRMatrix(const int &n, const int &m)
-      : rows(new int[n + 1]), cols(new int[m]) {}
-};
-
-int beta_layer_bfs_1(int start, vector<QueueEntry> &q, const CSRMatrix &tree,
-                     vector<bool> &black_list1, int beta) {
+int beta_layer_bfs_1(int start, vector<QueueEntry> &q,
+                     const CSRMatrix<int> &tree, vector<bool> &black_list1,
+                     int beta) {
   int rear = 0;
   q[rear++] = {start, 0, -1};
   for (int idx = 0; idx < rear; idx++) {
@@ -219,8 +219,9 @@ int beta_layer_bfs_1(int start, vector<QueueEntry> &q, const CSRMatrix &tree,
     if (cur_layer == beta) {
       continue;
     }
-    for (int j = tree.rows[cur_node]; j < tree.rows[cur_node + 1]; ++j) {
-      int v = tree.cols[j];
+    for (int j = tree.row_indices[cur_node]; j < tree.row_indices[cur_node + 1];
+         ++j) {
+      int v = tree.neighbors[j];
       if (cur_pre != v) {
         q[rear++] = {v, cur_layer + 1, cur_node};
       }
@@ -234,8 +235,8 @@ const auto pair_hash = [](const std::pair<int, int> &p) {
 };
 
 int beta_layer_bfs_2(
-    int start, vector<QueueEntry> &q, const CSRMatrix &tree,
-    const CSRMatrix &off_tree_graph, vector<bool> &black_list1, int beta,
+    int start, vector<QueueEntry> &q, const CSRMatrix<int> &tree,
+    const CSRMatrix<int> &off_tree_graph, vector<bool> &black_list1, int beta,
     unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges,
     vector<unsigned short> &banned_nodes) {
   static unsigned short id = 1;
@@ -248,9 +249,9 @@ int beta_layer_bfs_2(
     int cur_node = q[idx].node;
     int cur_layer = q[idx].layer;
     int cur_pre = q[idx].predecessor;
-    for (int j = off_tree_graph.rows[cur_node];
-         j < off_tree_graph.rows[cur_node + 1]; ++j) {
-      int v = off_tree_graph.cols[j];
+    for (int j = off_tree_graph.row_indices[cur_node];
+         j < off_tree_graph.row_indices[cur_node + 1]; ++j) {
+      int v = off_tree_graph.neighbors[j];
       if (black_list1[v]) {
         if (banned_nodes[cur_node] == 0 &&
             banned_nodes[cur_node] == banned_nodes[v]) {
@@ -263,8 +264,9 @@ int beta_layer_bfs_2(
     if (cur_layer == beta) {
       continue;
     }
-    for (int j = tree.rows[cur_node]; j < tree.rows[cur_node + 1]; ++j) {
-      int v = tree.cols[j];
+    for (int j = tree.row_indices[cur_node]; j < tree.row_indices[cur_node + 1];
+         ++j) {
+      int v = tree.neighbors[j];
       if (v != cur_pre) {
         q[rear++] = {v, cur_layer + 1, cur_node};
       }
@@ -273,28 +275,29 @@ int beta_layer_bfs_2(
   return rear;
 }
 
-CSRMatrix build_csr_matrix(const int &node_cnt, const vector<Edge> &edges) {
+CSRMatrix<int> build_csr_matrix(const int &node_cnt,
+                                const vector<Edge> &edges) {
   vector<int> deg(node_cnt + 1);
   for (auto &e : edges) {
     deg[e.a]++;
     deg[e.b]++;
   }
-  auto mat = CSRMatrix(node_cnt + 1, edges.size() * 2);
+  auto mat = CSRMatrix<int>(node_cnt + 1, edges.size() * 2);
   int start_idx = 0;
   for (int i = 1; i <= node_cnt; i++) {
-    mat.rows[i] = start_idx;
+    mat.row_indices[i] = start_idx;
     start_idx += deg[i];
   }
-  mat.rows[0] = 0;
-  mat.rows[node_cnt + 1] = start_idx;
+  mat.row_indices[0] = 0;
+  mat.row_indices[node_cnt + 1] = start_idx;
   for (auto &e : edges) {
-    mat.cols[mat.rows[e.a]] = e.b;
-    mat.cols[mat.rows[e.b]] = e.a;
-    mat.rows[e.a]++;
-    mat.rows[e.b]++;
+    mat.neighbors[mat.row_indices[e.a]] = e.b;
+    mat.neighbors[mat.row_indices[e.b]] = e.a;
+    mat.row_indices[e.a]++;
+    mat.row_indices[e.b]++;
   }
   for (int i = node_cnt; i >= 1; i--) {
-    mat.rows[i] = mat.rows[i - 1];
+    mat.row_indices[i] = mat.row_indices[i - 1];
   }
   return mat;
 }
