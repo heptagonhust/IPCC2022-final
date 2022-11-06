@@ -163,18 +163,17 @@ CSRMatrix<int> rebuild_tree(int node_cnt, const vector<Edge> &tree) {
 
 void tarjan_lca_impl(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
                      const CSRMatrix<int> &query_indices,
-                     vector<Edge> &query_info, int cur, UnionFindSet &ufs,
-                     vector<bool> &vis, vector<double> &weighted_depth,
+                     vector<Edge> &query_info, int cur, int fa,
+                     UnionFindSet &ufs, vector<double> &weighted_depth,
                      vector<int> &unweighted_depth) {
   ufs.fa[cur] = cur;
-  vis[cur] = 1;
   for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
     const Edge &e = tree_edges[tree.neighbors[i]];
     int v = cur ^ e.a ^ e.b;
-    if (!vis[v]) {
+    if (v != fa) {
       weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
       unweighted_depth[v] = 1 + unweighted_depth[cur];
-      tarjan_lca_impl(tree, tree_edges, query_indices, query_info, v, ufs, vis,
+      tarjan_lca_impl(tree, tree_edges, query_indices, query_info, v, cur, ufs,
                       weighted_depth, unweighted_depth);
       ufs.fa[v] = cur;
     }
@@ -183,7 +182,7 @@ void tarjan_lca_impl(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
        i < query_indices.row_indices[cur + 1]; ++i) {
     Edge &e = query_info[query_indices.neighbors[i]];
     int v = cur ^ e.a ^ e.b;
-    if (vis[v]) {
+    if (v != fa) {
       e.lca = ufs.find_fa(v);
     }
   }
@@ -194,11 +193,10 @@ void tarjan_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
                 vector<double> &weighted_depth, vector<int> &unweighted_depth) {
   ScopeTimer t_("tarjan_lca");
   UnionFindSet ufs(node_cnt + 1);
-  vector<bool> vis(node_cnt + 1);
   weighted_depth.resize(node_cnt + 1, 0);
   unweighted_depth.resize(node_cnt + 1, 0);
   auto query_indices = build_csr_matrix<true>(node_cnt, query_info);
-  tarjan_lca_impl(tree, tree_edges, query_indices, query_info, root, ufs, vis,
+  tarjan_lca_impl(tree, tree_edges, query_indices, query_info, root, root, ufs,
                   weighted_depth, unweighted_depth);
 }
 
