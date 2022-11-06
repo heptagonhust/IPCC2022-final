@@ -1,5 +1,6 @@
 #include "timer.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -161,43 +162,98 @@ CSRMatrix<int> rebuild_tree(int node_cnt, const vector<Edge> &tree) {
   return build_csr_matrix</* use_edge_list */ true>(node_cnt, tree);
 }
 
-void tarjan_lca_impl(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
-                     const CSRMatrix<int> &query_indices,
-                     vector<Edge> &query_info, int cur, int fa,
-                     UnionFindSet &ufs, vector<double> &weighted_depth,
-                     vector<int> &unweighted_depth) {
-  ufs.fa[cur] = cur;
+void euler_tour(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
+                int cur, int fa, int &dfn, vector<double> &weighted_depth,
+                vector<int> &unweighted_depth, vector<int> &euler_series,
+                vector<int> &pos) {
+  euler_series[dfn++] = cur;
+  pos[cur] = dfn - 1;
   for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
     const Edge &e = tree_edges[tree.neighbors[i]];
     int v = cur ^ e.a ^ e.b;
     if (v != fa) {
       weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
       unweighted_depth[v] = 1 + unweighted_depth[cur];
-      tarjan_lca_impl(tree, tree_edges, query_indices, query_info, v, cur, ufs,
-                      weighted_depth, unweighted_depth);
-      ufs.fa[v] = cur;
-    }
-  }
-  for (int i = query_indices.row_indices[cur];
-       i < query_indices.row_indices[cur + 1]; ++i) {
-    Edge &e = query_info[query_indices.neighbors[i]];
-    int v = cur ^ e.a ^ e.b;
-    if (v != fa) {
-      e.lca = ufs.find_fa(v);
+      euler_tour(tree, tree_edges, v, cur, dfn, weighted_depth,
+                 unweighted_depth, euler_series, pos);
+      euler_series[dfn++] = cur;
     }
   }
 }
 
-void tarjan_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
-                vector<Edge> &query_info, int root, int node_cnt,
-                vector<double> &weighted_depth, vector<int> &unweighted_depth) {
-  ScopeTimer t_("tarjan_lca");
-  UnionFindSet ufs(node_cnt + 1);
+constexpr int ilog2(int x) {
+  return (
+      (unsigned)(8 * sizeof(unsigned long long) - __builtin_clzll((x)) - 1));
+}
+
+void rmq_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
+             vector<Edge> &query_info, int root, int node_cnt,
+             vector<double> &weighted_depth, vector<int> &unweighted_depth) {
+  ScopeTimer t_("rmq_lca");
+  vector<int> euler_series((node_cnt + 1) * 2 - 1);
+  vector<int> pos(node_cnt + 1);
   weighted_depth.resize(node_cnt + 1, 0);
   unweighted_depth.resize(node_cnt + 1, 0);
-  auto query_indices = build_csr_matrix<true>(node_cnt, query_info);
-  tarjan_lca_impl(tree, tree_edges, query_indices, query_info, root, root, ufs,
-                  weighted_depth, unweighted_depth);
+  int dfn = 0;
+  euler_tour(tree, tree_edges, root, root, dfn, weighted_depth,
+             unweighted_depth, euler_series, pos);
+  const int block_size = sqrt(euler_series.size());
+  const int block_count = (euler_series.size() + block_size - 1) / block_size;
+  vector<int> prefix_min_per_block(euler_series.size());
+  vector<int> postfix_min_per_block(euler_series.size());
+  vector<int> min_per_block(block_count);
+  vector<int> contiguous_block_min(block_count * (block_count + 1) / 2);
+  const auto idx_map = [&block_count](int i, int j) {
+    const int col_idx = j - i;
+    const int res = (block_count + block_count - i + 1) * i / 2 + col_idx;
+    // printf("(%d, %d/%d): %d\n", i, j, block_count, res);
+    return res;
+  };
+  for (int i = 0; i < block_count; ++i) {
+    const int block_start = block_size * i;
+    const int block_end =
+        min(block_start + block_size, (int)euler_series.size());
+    prefix_min_per_block[block_start] = pos[euler_series[block_start]];
+    for (int j = block_start + 1; j < block_end; ++j) {
+      prefix_min_per_block[j] =
+          min(pos[euler_series[j]], prefix_min_per_block[j - 1]);
+    }
+    postfix_min_per_block[block_end - 1] = pos[euler_series[block_end - 1]];
+    for (int j = block_end - 1; j > block_start; --j) {
+      postfix_min_per_block[j - 1] =
+          min(pos[euler_series[j - 1]], postfix_min_per_block[j]);
+    }
+    min_per_block[i] = postfix_min_per_block[block_start];
+  }
+  for (int i = 0; i < block_count; ++i) {
+    contiguous_block_min[idx_map(i, i)] = min_per_block[i];
+    for (int j = i + 1; j < block_count; ++j) {
+      contiguous_block_min[idx_map(i, j)] =
+          min(min_per_block[j], contiguous_block_min[idx_map(i, j - 1)]);
+    }
+  }
+  for (int i = 0; i < query_info.size(); ++i) {
+    Edge &e = query_info[i];
+    const int l = min(pos[e.a], pos[e.b]);
+    const int r = max(pos[e.a], pos[e.b]);
+    const int l_block = l / block_size;
+    const int r_block = r / block_size;
+    int lca_pos = euler_series.size();
+    if (l_block == r_block) {
+      for (int j = l; j <= r; ++j) {
+        if (pos[euler_series[j]] < lca_pos) {
+          lca_pos = pos[euler_series[j]];
+        }
+      }
+    } else if (l_block + 1 == r_block) {
+      lca_pos = min(postfix_min_per_block[l], prefix_min_per_block[r]);
+    } else {
+      lca_pos = min(contiguous_block_min[idx_map(l_block + 1, r_block - 1)],
+                    min(postfix_min_per_block[l], prefix_min_per_block[r]));
+    }
+    const int lca = euler_series[lca_pos];
+    e.lca = lca;
+  }
 }
 
 void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
@@ -411,8 +467,11 @@ int main(int argc, const char *argv[]) {
   auto new_tree = rebuild_tree(M, tree_edges);
   vector<double> tree_weighted_depth;
   vector<int> tree_unweighted_depth;
-  tarjan_lca(new_tree, tree_edges, off_tree_edges, r_node, M,
-             tree_weighted_depth, tree_unweighted_depth);
+  rmq_lca(new_tree, tree_edges, off_tree_edges, r_node, M, tree_weighted_depth,
+          tree_unweighted_depth);
+  // tarjan_lca(new_tree, tree_edges, off_tree_edges, r_node, M,
+  //            tree_weighted_depth, tree_unweighted_depth);
+
   sort_off_tree_edges(off_tree_edges, tree_weighted_depth);
 
 #ifdef DEBUG
