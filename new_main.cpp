@@ -22,7 +22,6 @@ using namespace std;
 struct Edge {
   int a, b;
   double weight, origin_weight;
-  int lca;
   bool operator<(const Edge &rhs) const { return this->weight > rhs.weight; }
 };
 
@@ -180,30 +179,33 @@ constexpr int ilog2(int x) {
   return (
       (unsigned)(8 * sizeof(unsigned long long) - __builtin_clzll((x)) - 1));
 }
-
-void rmq_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
-             vector<Edge> &query_info, int root, int node_cnt,
-             vector<double> &weighted_depth, vector<int> &unweighted_depth) {
+int idx_map(int i, int j, int block_count) {
+  const int col_idx = j - i;
+  const int res = (block_count + block_count - i + 1) * i / 2 + col_idx;
+  // printf("(%d, %d/%d): %d\n", i, j, block_count, res);
+  return res;
+};
+void rmq_lca_preprocess(
+    const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
+    vector<Edge> &query_info, int root, int node_cnt,
+    vector<double> &weighted_depth, vector<int> &unweighted_depth,
+    vector<int> &pos, vector<int> &euler_series,
+    vector<int> &postfix_min_per_block, vector<int> &prefix_min_per_block,
+    vector<int> &contiguous_block_min, int &block_count, int &block_size) {
   ScopeTimer t_("rmq_lca");
-  vector<int> euler_series((node_cnt + 1) * 2 - 1);
-  vector<int> pos(node_cnt + 1);
+  euler_series.resize((node_cnt + 1) * 2 - 1);
+  pos.resize(node_cnt + 1);
   weighted_depth.resize(node_cnt + 1, 0);
   unweighted_depth.resize(node_cnt + 1, 0);
   int dfn = 0;
   euler_tour(tree, tree_edges, root, root, dfn, weighted_depth,
              unweighted_depth, euler_series, pos);
-  const int block_size = sqrt(euler_series.size());
-  const int block_count = (euler_series.size() + block_size - 1) / block_size;
-  vector<int> prefix_min_per_block(euler_series.size());
-  vector<int> postfix_min_per_block(euler_series.size());
+  block_size = sqrt(euler_series.size());
+  block_count = (euler_series.size() + block_size - 1) / block_size;
+  prefix_min_per_block.resize(euler_series.size());
+  postfix_min_per_block.resize(euler_series.size());
   vector<int> min_per_block(block_count);
-  vector<int> contiguous_block_min(block_count * (block_count + 1) / 2);
-  const auto idx_map = [&block_count](int i, int j) {
-    const int col_idx = j - i;
-    const int res = (block_count + block_count - i + 1) * i / 2 + col_idx;
-    // printf("(%d, %d/%d): %d\n", i, j, block_count, res);
-    return res;
-  };
+  contiguous_block_min.resize(block_count * (block_count + 1) / 2);
   for (int i = 0; i < block_count; ++i) {
     const int block_start = block_size * i;
     const int block_end =
@@ -221,42 +223,58 @@ void rmq_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
     min_per_block[i] = postfix_min_per_block[block_start];
   }
   for (int i = 0; i < block_count; ++i) {
-    contiguous_block_min[idx_map(i, i)] = min_per_block[i];
+    contiguous_block_min[idx_map(i, i, block_count)] = min_per_block[i];
     for (int j = i + 1; j < block_count; ++j) {
-      contiguous_block_min[idx_map(i, j)] =
-          min(min_per_block[j], contiguous_block_min[idx_map(i, j - 1)]);
+      contiguous_block_min[idx_map(i, j, block_count)] =
+          min(min_per_block[j],
+              contiguous_block_min[idx_map(i, j - 1, block_count)]);
     }
-  }
-  for (int i = 0; i < query_info.size(); ++i) {
-    Edge &e = query_info[i];
-    const int l = min(pos[e.a], pos[e.b]);
-    const int r = max(pos[e.a], pos[e.b]);
-    const int l_block = l / block_size;
-    const int r_block = r / block_size;
-    int lca_pos = euler_series.size();
-    if (l_block == r_block) {
-      for (int j = l; j <= r; ++j) {
-        if (pos[euler_series[j]] < lca_pos) {
-          lca_pos = pos[euler_series[j]];
-        }
-      }
-    } else if (l_block + 1 == r_block) {
-      lca_pos = min(postfix_min_per_block[l], prefix_min_per_block[r]);
-    } else {
-      lca_pos = min(contiguous_block_min[idx_map(l_block + 1, r_block - 1)],
-                    min(postfix_min_per_block[l], prefix_min_per_block[r]));
-    }
-    const int lca = euler_series[lca_pos];
-    e.lca = lca;
   }
 }
 
-void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
+inline int query_lca(const vector<int> &pos, const vector<int> &euler_series,
+                     const vector<int> &postfix_min_per_block,
+                     const vector<int> &prefix_min_per_block,
+                     const vector<int> &contiguous_block_min, int node_cnt,
+                     int block_count, int block_size, int a, int b) {
+  const int l = min(pos[a], pos[b]);
+  const int r = max(pos[a], pos[b]);
+  const int l_block = l / block_size;
+  const int r_block = r / block_size;
+  int lca_pos = euler_series.size();
+  if (l_block == r_block) {
+    for (int j = l; j <= r; ++j) {
+      if (pos[euler_series[j]] < lca_pos) {
+        lca_pos = pos[euler_series[j]];
+      }
+    }
+  } else if (l_block + 1 == r_block) {
+    lca_pos = min(postfix_min_per_block[l], prefix_min_per_block[r]);
+  } else {
+    lca_pos = min(
+        contiguous_block_min[idx_map(l_block + 1, r_block - 1, block_count)],
+        min(postfix_min_per_block[l], prefix_min_per_block[r]));
+  }
+  return euler_series[lca_pos];
+}
+
+void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth,
+                         const vector<int> &pos,
+                         const vector<int> &euler_series,
+                         const vector<int> &postfix_min_per_block,
+                         const vector<int> &prefix_min_per_block,
+                         const vector<int> &contiguous_block_min, int node_cnt,
+                         int block_count, int block_size) {
   ScopeTimer t_("sort_off_tree_edges");
 // #pragma omp parallel for
   for (int i = 0; i < edges.size(); ++i) {
     auto &e = edges[i];
-    e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
+    e.weight =
+        e.origin_weight *
+        (depth[e.a] + depth[e.b] -
+         2 * depth[query_lca(pos, euler_series, postfix_min_per_block,
+                             prefix_min_per_block, contiguous_block_min,
+                             node_cnt, block_count, block_size, e.a, e.b)]);
   }
 #ifdef DEBUG
   puts("unsorted_off_tree_edges");
@@ -348,7 +366,12 @@ int beta_layer_bfs_2(
 vector<int> add_off_tree_edges(const int node_cnt,
                                const vector<Edge> &tree_edges,
                                const vector<Edge> &off_tree_edges,
-                               const vector<int> &depth) {
+                               const vector<int> &depth, const vector<int> &pos,
+                               const vector<int> &euler_series,
+                               const vector<int> &postfix_min_per_block,
+                               const vector<int> &prefix_min_per_block,
+                               const vector<int> &contiguous_block_min,
+                               int block_count, int block_size) {
 
   ScopeTimer t_("add_off_tree_edges");
   // vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
@@ -387,7 +410,10 @@ vector<int> add_off_tree_edges(const int node_cnt,
       continue;
     }
     edges_to_be_add.push_back(i);
-    int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
+    int beta = min(depth[e.a], depth[e.b]) -
+               depth[query_lca(pos, euler_series, postfix_min_per_block,
+                               prefix_min_per_block, contiguous_block_min,
+                               node_cnt, block_count, block_size, e.a, e.b)];
 #ifdef DEBUG
     printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
 #endif
@@ -463,12 +489,22 @@ int main(int argc, const char *argv[]) {
   auto new_tree = rebuild_tree(M, tree_edges);
   vector<double> tree_weighted_depth;
   vector<int> tree_unweighted_depth;
-  rmq_lca(new_tree, tree_edges, off_tree_edges, r_node, M, tree_weighted_depth,
-          tree_unweighted_depth);
+  vector<int> pos;
+  vector<int> euler_series;
+  vector<int> postfix_min_per_block;
+  vector<int> prefix_min_per_block;
+  vector<int> contiguous_block_min;
+  int block_count, block_size;
+  rmq_lca_preprocess(new_tree, tree_edges, off_tree_edges, r_node, M,
+                     tree_weighted_depth, tree_unweighted_depth, pos,
+                     euler_series, postfix_min_per_block, prefix_min_per_block,
+                     contiguous_block_min, block_count, block_size);
   // tarjan_lca(new_tree, tree_edges, off_tree_edges, r_node, M,
   //            tree_weighted_depth, tree_unweighted_depth);
 
-  sort_off_tree_edges(off_tree_edges, tree_weighted_depth);
+  sort_off_tree_edges(off_tree_edges, tree_weighted_depth, pos, euler_series,
+                      postfix_min_per_block, prefix_min_per_block,
+                      contiguous_block_min, N, block_count, block_size);
 
 #ifdef DEBUG
   puts("sorted off_tree_edges: ");
@@ -477,8 +513,10 @@ int main(int argc, const char *argv[]) {
   }
 #endif
 
-  vector<int> res =
-      add_off_tree_edges(M, tree_edges, off_tree_edges, tree_unweighted_depth);
+  vector<int> res = add_off_tree_edges(
+      M, tree_edges, off_tree_edges, tree_unweighted_depth, pos, euler_series,
+      postfix_min_per_block, prefix_min_per_block, contiguous_block_min,
+      block_count, block_size);
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +
                                      (end.tv_usec - start.tv_usec) / 1000.0);
