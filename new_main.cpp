@@ -101,20 +101,15 @@ vector<int> get_unweighted_distance_bfs(const vector<Edge> &edges,
   return res;
 }
 
-vector<Edge> get_new_edges(const vector<Edge> &edges, const vector<int> &deg,
-                           const vector<int> &unweighted_distance) {
+void get_new_edges(vector<Edge> &edges, const vector<int> &deg,
+                   const vector<int> &unweighted_distance) {
   ScopeTimer t_("get_new_edges");
-  vector<Edge> res(edges.size());
-// #pragma omp parallel for
+  // #pragma omp parallel for
   for (int i = 0; i < edges.size(); ++i) {
-    res[i].a = edges[i].a;
-    res[i].b = edges[i].b;
-    res[i].origin_weight = edges[i].origin_weight;
-    res[i].weight =
+    edges[i].weight =
         edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
         (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
   }
-  return res;
 }
 
 struct UnionFindSet {
@@ -453,7 +448,8 @@ int main(int argc, const char *argv[]) {
   int r_node = largest_volume_node(volume);
   auto unweighted_distance =
       get_unweighted_distance_bfs(origin_edges, G, r_node, M);
-  auto new_edges = get_new_edges(origin_edges, degree, unweighted_distance);
+  auto &new_edges = origin_edges;
+  get_new_edges(origin_edges, degree, unweighted_distance);
   vector<Edge> tree_edges, off_tree_edges;
   kruskal(M, new_edges, tree_edges, off_tree_edges);
 
