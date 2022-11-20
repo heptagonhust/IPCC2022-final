@@ -1,3 +1,4 @@
+#include "rust_parasort.h"
 #include "timer.hpp"
 #include <algorithm>
 #include <cmath>
@@ -17,16 +18,15 @@
 #include <sys/time.h>
 #include <unordered_set>
 #include <vector>
-
 using namespace std;
 
 // #define DEBUG
-struct Edge {
-  int a, b;
-  double weight, origin_weight;
-  int lca;
-  bool operator<(const Edge &rhs) const { return this->weight > rhs.weight; }
-};
+// struct Edge {
+//   int a, b;
+//   double weight, origin_weight;
+//   int lca;
+//   bool operator<(const Edge &rhs) const { return this->weight > rhs.weight; }
+// };
 
 extern "C" __attribute__((noinline)) void magic_trace_stop_indicator() {
   asm volatile("" ::: "memory");
@@ -133,7 +133,8 @@ struct UnionFindSet {
 void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
              vector<Edge> &off_tree_edges) {
   ScopeTimer t_("kruskal");
-  stable_sort(std::execution::par_unseq, edges.begin(), edges.end());
+  slice_mut_Edge_t edge_slice{edges.data(), edges.size()};
+  parallel_sort_edges(edge_slice);
   tree_edges.reserve(node_cnt - 1);
   off_tree_edges.reserve(edges.size() - (node_cnt - 1));
   UnionFindSet ufs(node_cnt + 1);
@@ -268,7 +269,8 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
     printf("%d %d %lf %lf\n", x.a, x.b, x.weight, x.origin_weight);
   }
 #endif
-  stable_sort(std::execution::par_unseq, edges.begin(), edges.end());
+  slice_mut_Edge_t edge_slice{edges.data(), edges.size()};
+  parallel_sort_edges(edge_slice);
 }
 
 void mark_ban_edges(vector<bool> &ban, const vector<int> &ban_edges) {

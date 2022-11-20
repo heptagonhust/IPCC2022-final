@@ -1,0 +1,20 @@
+[package]
+name = "parallel_sort"
+version = "0.1.0"
+edition = "2021"
+[lib]
+crate-type = [
+    "staticlib",  # Ensure it gets compiled as a (static) C library
+    "cdylib",     # If you want a shared/dynamic C library (advanced)
+    "lib",        # For downstream Rust dependents: `examples/`, `tests/` etc.
+]
+path = "src/lib.rs"
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+# If you want to generate the headers, use a feature-gate
+# to opt into doing so:
+headers = ["safer-ffi/headers"]
+
+[dependencies]
+rayon = "1.6.0"
+safer-ffi = {version = "0.0.10", features = ["headers", "derives"]}
