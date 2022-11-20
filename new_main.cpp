@@ -1,3 +1,4 @@
+#include "sort.hpp"
 #include "timer.hpp"
 #include <algorithm>
 #include <cmath>
@@ -5,19 +6,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <execution>
 #include <fstream>
 #include <iostream>
 #include <math.h>
 #include <memory>
-#include <pstl/glue_execution_defs.h>
 #include <queue>
 #include <stack>
 #include <string>
 #include <sys/time.h>
 #include <unordered_set>
 #include <vector>
-
 using namespace std;
 
 // #define DEBUG
@@ -133,7 +131,7 @@ struct UnionFindSet {
 void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
              vector<Edge> &off_tree_edges) {
   ScopeTimer t_("kruskal");
-  stable_sort(std::execution::par_unseq, edges.begin(), edges.end());
+  boost::sort::parallel_stable_sort(edges.begin(), edges.end());
   tree_edges.reserve(node_cnt - 1);
   off_tree_edges.reserve(edges.size() - (node_cnt - 1));
   UnionFindSet ufs(node_cnt + 1);
@@ -268,7 +266,7 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
     printf("%d %d %lf %lf\n", x.a, x.b, x.weight, x.origin_weight);
   }
 #endif
-  stable_sort(std::execution::par_unseq, edges.begin(), edges.end());
+  boost::sort::parallel_stable_sort(edges.begin(), edges.end());
 }
 
 void mark_ban_edges(vector<bool> &ban, const vector<int> &ban_edges) {
