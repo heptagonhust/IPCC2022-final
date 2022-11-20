@@ -5,10 +5,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <execution>
 #include <fstream>
 #include <iostream>
 #include <math.h>
 #include <memory>
+#include <pstl/glue_execution_defs.h>
 #include <queue>
 #include <stack>
 #include <string>
@@ -104,7 +106,7 @@ vector<int> get_unweighted_distance_bfs(const vector<Edge> &edges,
 void get_new_edges(vector<Edge> &edges, const vector<int> &deg,
                    const vector<int> &unweighted_distance) {
   ScopeTimer t_("get_new_edges");
-  // #pragma omp parallel for
+#pragma omp parallel for
   for (int i = 0; i < edges.size(); ++i) {
     edges[i].weight =
         edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
@@ -131,7 +133,7 @@ struct UnionFindSet {
 void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
              vector<Edge> &off_tree_edges) {
   ScopeTimer t_("kruskal");
-  stable_sort(edges.begin(), edges.end());
+  stable_sort(std::execution::par_unseq, edges.begin(), edges.end());
   tree_edges.reserve(node_cnt - 1);
   off_tree_edges.reserve(edges.size() - (node_cnt - 1));
   UnionFindSet ufs(node_cnt + 1);
@@ -204,6 +206,7 @@ void rmq_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
     // printf("(%d, %d/%d): %d\n", i, j, block_count, res);
     return res;
   };
+#pragma omp parallel for
   for (int i = 0; i < block_count; ++i) {
     const int block_start = block_size * i;
     const int block_end =
@@ -227,6 +230,7 @@ void rmq_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
           min(min_per_block[j], contiguous_block_min[idx_map(i, j - 1)]);
     }
   }
+#pragma omp parallel for
   for (int i = 0; i < query_info.size(); ++i) {
     Edge &e = query_info[i];
     const int l = min(pos[e.a], pos[e.b]);
@@ -253,7 +257,7 @@ void rmq_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
 
 void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
   ScopeTimer t_("sort_off_tree_edges");
-// #pragma omp parallel for
+#pragma omp parallel for
   for (int i = 0; i < edges.size(); ++i) {
     auto &e = edges[i];
     e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
@@ -264,7 +268,7 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
     printf("%d %d %lf %lf\n", x.a, x.b, x.weight, x.origin_weight);
   }
 #endif
-  stable_sort(edges.begin(), edges.end());
+  stable_sort(std::execution::par_unseq, edges.begin(), edges.end());
 }
 
 void mark_ban_edges(vector<bool> &ban, const vector<int> &ban_edges) {
