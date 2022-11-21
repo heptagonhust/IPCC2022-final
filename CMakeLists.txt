@@ -7,13 +7,12 @@ add_compile_options(-Wall -Wno-unused-result -Wno-sign-compare -O3 -g -mavx2)
 # add_compile_options(-fsanitize=address)
 # add_link_options(-fsanitize=address)
 
-
+find_package(Boost REQUIRED)
 # add_executable(sparsify main.cpp)
 add_executable(ng-sparsify new_main.cpp timer.hpp)
-target_include_directories(ng-sparsify PUBLIC sort/include/boost/sort)
 find_package(OpenMP REQUIRED)
 find_package(Threads REQUIRED)
-
+target_include_directories(ng-sparsify PRIVATE ${Boost_INCLUDE_DIRS})
 # find_package(MPI REQUIRED)
 # target_link_libraries(ng-sparsify MPI::MPI_CXX)
 target_link_libraries(ng-sparsify Threads::Threads)
