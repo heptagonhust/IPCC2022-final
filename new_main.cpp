@@ -132,6 +132,7 @@ void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
              vector<Edge> &off_tree_edges) {
   ScopeTimer t_("kruskal");
   boost::sort::parallel_stable_sort(edges.begin(), edges.end());
+  t_.tick("sort edges");
   tree_edges.reserve(node_cnt - 1);
   off_tree_edges.reserve(edges.size() - (node_cnt - 1));
   UnionFindSet ufs(node_cnt + 1);
@@ -145,11 +146,13 @@ void kruskal(int node_cnt, vector<Edge> &edges, vector<Edge> &tree_edges,
       off_tree_edges.push_back(edge);
     }
   }
+  t_.tick("collect mst edges");
   int off_tree_edges_cur = off_tree_edges.size();
   off_tree_edges.resize(off_tree_edges.size() + edges.size() - edge_cnt);
   for (int i = edge_cnt, j = off_tree_edges_cur; i < edges.size(); ++i, ++j) {
     off_tree_edges[j] = edges[i];
   }
+  t_.tick("copy off tree edges");
 }
 
 CSRMatrix<int> rebuild_tree(int node_cnt, const vector<Edge> &tree) {
@@ -192,6 +195,7 @@ void rmq_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
   int dfn = 0;
   euler_tour(tree, tree_edges, root, root, dfn, weighted_depth,
              unweighted_depth, euler_series, pos);
+  t_.tick("euler tour");
   const int block_size = sqrt(euler_series.size());
   const int block_count = (euler_series.size() + block_size - 1) / block_size;
   vector<int> prefix_min_per_block(euler_series.size());
@@ -204,6 +208,7 @@ void rmq_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
     // printf("(%d, %d/%d): %d\n", i, j, block_count, res);
     return res;
   };
+  t_.tick("vec init");
 #pragma omp parallel for
   for (int i = 0; i < block_count; ++i) {
     const int block_start = block_size * i;
@@ -221,6 +226,7 @@ void rmq_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
     }
     min_per_block[i] = postfix_min_per_block[block_start];
   }
+#pragma omp parallel for
   for (int i = 0; i < block_count; ++i) {
     contiguous_block_min[idx_map(i, i)] = min_per_block[i];
     for (int j = i + 1; j < block_count; ++j) {
@@ -228,6 +234,7 @@ void rmq_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
           min(min_per_block[j], contiguous_block_min[idx_map(i, j - 1)]);
     }
   }
+  t_.tick("lca preprocess");
 #pragma omp parallel for
   for (int i = 0; i < query_info.size(); ++i) {
     Edge &e = query_info[i];
@@ -251,6 +258,7 @@ void rmq_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
     const int lca = euler_series[lca_pos];
     e.lca = lca;
   }
+  t_.tick("lca query");
 }
 
 void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
@@ -260,6 +268,7 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
     auto &e = edges[i];
     e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
   }
+  t_.tick("map edges weight");
 #ifdef DEBUG
   puts("unsorted_off_tree_edges");
   for (auto &x : edges) {
@@ -267,6 +276,7 @@ void sort_off_tree_edges(vector<Edge> &edges, const vector<double> &depth) {
   }
 #endif
   boost::sort::parallel_stable_sort(edges.begin(), edges.end());
+  t_.tick("sort edges");
 }
 
 void mark_ban_edges(vector<bool> &ban, const vector<int> &ban_edges) {
