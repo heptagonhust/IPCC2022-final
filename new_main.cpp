@@ -198,10 +198,11 @@ void rmq_lca(const CSRMatrix<int> &tree, const vector<Edge> &tree_edges,
   t_.tick("euler tour");
   const int block_size = sqrt(euler_series.size());
   const int block_count = (euler_series.size() + block_size - 1) / block_size;
-  vector<int> prefix_min_per_block(euler_series.size());
-  vector<int> postfix_min_per_block(euler_series.size());
-  vector<int> min_per_block(block_count);
-  vector<int> contiguous_block_min(block_count * (block_count + 1) / 2);
+  std::unique_ptr<int[]> prefix_min_per_block(new int[euler_series.size()]);
+  std::unique_ptr<int[]> postfix_min_per_block(new int[euler_series.size()]);
+  std::unique_ptr<int[]> min_per_block(new int[block_count]);
+  std::unique_ptr<int[]> contiguous_block_min(
+      new int[block_count * (block_count + 1) / 2]);
   const auto idx_map = [&block_count](int i, int j) {
     const int col_idx = j - i;
     const int res = (block_count + block_count - i + 1) * i / 2 + col_idx;
