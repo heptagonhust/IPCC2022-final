@@ -39,7 +39,7 @@ template <typename T> struct CSRMatrix {
 
 template <bool use_edge_list = false>
 CSRMatrix<int> build_csr_matrix(const int &node_cnt, const int &edge_cnt,
-                                Edge *edges) {
+                                const Edge *edges) {
   vector<int> deg(node_cnt + 1);
   for (int i = 0; i < edge_cnt; ++i) {
     deg[edges[i].a]++;
@@ -71,7 +71,7 @@ CSRMatrix<int> build_csr_matrix(const int &node_cnt, const int &edge_cnt,
   return mat;
 }
 
-int largest_volume_node(const int &node_cnt, double *volume) {
+int largest_volume_node(const int &node_cnt, const double *volume) {
   ScopeTimer t_("largest_volume_node");
   double max_volume = 0.0;
   int max_index = 0;
@@ -85,10 +85,11 @@ int largest_volume_node(const int &node_cnt, double *volume) {
   return max_index;
 }
 
-int *get_unweighted_distance_bfs(Edge *edges, const CSRMatrix<int> &G,
-                                 int start, int node_cnt) {
+unique_ptr<int[]> get_unweighted_distance_bfs(const Edge *edges,
+                                              const CSRMatrix<int> &G,
+                                              int start, int node_cnt) {
   ScopeTimer t_("get_unweighted_distance_bfs");
-  int *res(new int[node_cnt + 1]());
+  unique_ptr<int[]> res(new int[node_cnt + 1]{});
   vector<bool> vis(node_cnt + 1);
   vis[start] = 1;
   queue<int> q;
@@ -109,8 +110,8 @@ int *get_unweighted_distance_bfs(Edge *edges, const CSRMatrix<int> &G,
   return res;
 }
 
-void get_new_edges(const int &edge_cnt, Edge *edges, int *deg,
-                   int *unweighted_distance) {
+void get_new_edges(const int &edge_cnt, Edge *edges, const int *deg,
+                   const int *unweighted_distance) {
   ScopeTimer t_("get_new_edges");
 #pragma omp parallel for
   for (int i = 0; i < edge_cnt; ++i) {
@@ -121,8 +122,8 @@ void get_new_edges(const int &edge_cnt, Edge *edges, int *deg,
 }
 
 struct UnionFindSet {
-  vector<int> fa;
-  UnionFindSet(size_t sz) : fa(sz) {
+  unique_ptr<int[]> fa;
+  UnionFindSet(size_t sz) : fa(new int[sz]) {
     for (int i = 0; i < sz; ++i) {
       fa[i] = i;
     }
@@ -161,13 +162,13 @@ void kruskal(int node_cnt, int edge_cnt, Edge *edges, Edge *tree_edges,
   t_.tick("copy off tree edges");
 }
 
-CSRMatrix<int> rebuild_tree(int node_cnt, int edge_cnt, Edge *tree) {
+CSRMatrix<int> rebuild_tree(int node_cnt, int edge_cnt, const Edge *tree) {
   ScopeTimer t_("rebuild_tree");
   return build_csr_matrix</* use_edge_list */ true>(node_cnt, edge_cnt, tree);
 }
 
-void euler_tour(const CSRMatrix<int> &tree, Edge *tree_edges, int cur, int fa,
-                int &dfn, double *weighted_depth, int *unweighted_depth,
+void euler_tour(const CSRMatrix<int> &tree, const Edge *tree_edges, int cur,
+                int fa, int &dfn, double *weighted_depth, int *unweighted_depth,
                 int *euler_series, int *pos) {
   euler_series[dfn++] = cur;
   pos[cur] = dfn - 1;
@@ -193,11 +194,11 @@ void rmq_lca(const CSRMatrix<int> &tree, Edge *tree_edges, int query_size,
              Edge *query_info, int root, int node_cnt, double *weighted_depth,
              int *unweighted_depth) {
   ScopeTimer t_("rmq_lca");
-  int *euler_series(new int[(node_cnt + 1) * 2 - 1]);
-  int *pos(new int[node_cnt + 1]);
+  std::unique_ptr<int[]> euler_series(new int[(node_cnt + 1) * 2 - 1]);
+  std::unique_ptr<int[]> pos(new int[node_cnt + 1]);
   int dfn = 0;
   euler_tour(tree, tree_edges, root, root, dfn, weighted_depth,
-             unweighted_depth, euler_series, pos);
+             unweighted_depth, euler_series.get(), pos.get());
   t_.tick("euler tour");
   const int block_size = sqrt(dfn);
   const int block_count = (dfn + block_size - 1) / block_size;
@@ -262,14 +263,12 @@ void rmq_lca(const CSRMatrix<int> &tree, Edge *tree_edges, int query_size,
     e.lca = lca;
   }
   t_.tick("lca query");
-  delete[] euler_series;
-  delete[] pos;
 }
 
-void sort_off_tree_edges(int edges_size, Edge *edges, double *depth) {
+void sort_off_tree_edges(int edges_cnt, Edge *edges, const double *depth) {
   ScopeTimer t_("sort_off_tree_edges");
 #pragma omp parallel for
-  for (int i = 0; i < edges_size; ++i) {
+  for (int i = 0; i < edges_cnt; ++i) {
     auto &e = edges[i];
     e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
   }
@@ -280,7 +279,7 @@ void sort_off_tree_edges(int edges_size, Edge *edges, double *depth) {
     printf("%d %d %lf %lf\n", x.a, x.b, x.weight, x.origin_weight);
   }
 #endif
-  boost::sort::parallel_stable_sort(edges, edges + edges_size);
+  boost::sort::parallel_stable_sort(edges, edges + edges_cnt);
   t_.tick("sort edges");
 }
 
@@ -363,8 +362,9 @@ int beta_layer_bfs_2(
 }
 
 vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
-                               Edge *tree_edges, const int off_tree_edges_size,
-                               Edge *off_tree_edges, int *depth) {
+                               const Edge *tree_edges,
+                               const int off_tree_edges_size,
+                               const Edge *off_tree_edges, const int *depth) {
 
   ScopeTimer t_("add_off_tree_edges");
   // vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
@@ -440,9 +440,9 @@ int main(int argc, const char *argv[]) {
   // L, edge cnt
   assert(!(L & 1));
 
-  Edge *origin_edges(new Edge[L >> 1]);
-  int *degree(new int[M + 1]());
-  double *volume(new double[M + 1]());
+  unique_ptr<Edge[]> origin_edges(new Edge[L >> 1]);
+  unique_ptr<int[]> degree(new int[M + 1]());
+  unique_ptr<double[]> volume(new double[M + 1]());
   int edges_cnt = 0;
   for (int i = 0; i < L; ++i) {
     int f, t;
@@ -457,8 +457,8 @@ int main(int argc, const char *argv[]) {
     degree[t]++;
     origin_edges[edges_cnt++] = Edge{f, t, w, w};
   }
-  auto G =
-      build_csr_matrix</* use_edge_list */ true>(M, edges_cnt, origin_edges);
+  auto G = build_csr_matrix</* use_edge_list */ true>(M, edges_cnt,
+                                                      origin_edges.get());
   fin.close();
   printf("edge_cnt: %d\n", edges_cnt);
   /**************************************************/
@@ -466,18 +466,20 @@ int main(int argc, const char *argv[]) {
   /**************************************************/
   struct timeval start, end;
   gettimeofday(&start, NULL);
-  int r_node = largest_volume_node(M, volume);
+  int r_node = largest_volume_node(M, volume.get());
   auto unweighted_distance =
-      get_unweighted_distance_bfs(origin_edges, G, r_node, M);
-  get_new_edges(edges_cnt, origin_edges, degree, unweighted_distance);
+      get_unweighted_distance_bfs(origin_edges.get(), G, r_node, M);
+  get_new_edges(edges_cnt, origin_edges.get(), degree.get(),
+                unweighted_distance.get());
 
-  auto new_edges = origin_edges;
+  auto new_edges = std::move(origin_edges);
 
   const int tree_edges_size = M - 1;
   const int off_tree_edges_size = edges_cnt - tree_edges_size;
-  Edge *tree_edges(new Edge[tree_edges_size]),
-      *off_tree_edges(new Edge[off_tree_edges_size]);
-  kruskal(M, edges_cnt, new_edges, tree_edges, off_tree_edges);
+  unique_ptr<Edge[]> tree_edges(new Edge[tree_edges_size]),
+      off_tree_edges(new Edge[off_tree_edges_size]);
+  kruskal(M, edges_cnt, new_edges.get(), tree_edges.get(),
+          off_tree_edges.get());
 
 #ifdef DEBUG
   puts("kruscal results: ");
@@ -486,15 +488,16 @@ int main(int argc, const char *argv[]) {
   }
 #endif
 
-  auto new_tree = rebuild_tree(M, tree_edges_size, tree_edges);
-  double *tree_weighted_depth(new double[M + 1]);
-  int *tree_unweighted_depth(new int[M + 1]);
-  rmq_lca(new_tree, tree_edges, off_tree_edges_size, off_tree_edges, r_node, M,
-          tree_weighted_depth, tree_unweighted_depth);
+  auto new_tree = rebuild_tree(M, tree_edges_size, tree_edges.get());
+  unique_ptr<double[]> tree_weighted_depth(new double[M + 1]);
+  unique_ptr<int[]> tree_unweighted_depth(new int[M + 1]);
+  rmq_lca(new_tree, tree_edges.get(), off_tree_edges_size, off_tree_edges.get(),
+          r_node, M, tree_weighted_depth.get(), tree_unweighted_depth.get());
   // tarjan_lca(new_tree, tree_edges, off_tree_edges, r_node, M,
   //            tree_weighted_depth, tree_unweighted_depth);
 
-  sort_off_tree_edges(off_tree_edges_size, off_tree_edges, tree_weighted_depth);
+  sort_off_tree_edges(off_tree_edges_size, off_tree_edges.get(),
+                      tree_weighted_depth.get());
 
 #ifdef DEBUG
   puts("sorted off_tree_edges: ");
@@ -503,9 +506,9 @@ int main(int argc, const char *argv[]) {
   }
 #endif
 
-  vector<int> res =
-      add_off_tree_edges(M, tree_edges_size, tree_edges, off_tree_edges_size,
-                         off_tree_edges, tree_unweighted_depth);
+  vector<int> res = add_off_tree_edges(
+      M, tree_edges_size, tree_edges.get(), off_tree_edges_size,
+      off_tree_edges.get(), tree_unweighted_depth.get());
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +
                                      (end.tv_usec - start.tv_usec) / 1000.0);
@@ -521,12 +524,4 @@ int main(int argc, const char *argv[]) {
             int(off_tree_edges[res[i]].b));
   }
   fclose(out);
-  delete[] origin_edges;
-  delete[] volume;
-  delete[] degree;
-  delete[] tree_edges;
-  delete[] off_tree_edges;
-  delete[] unweighted_distance;
-  delete[] tree_weighted_depth;
-  delete[] tree_unweighted_depth;
 }
