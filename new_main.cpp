@@ -292,9 +292,9 @@ struct QueueEntry {
   int node, layer, predecessor;
 };
 
-int beta_layer_bfs_1(int start, vector<QueueEntry> &q,
-                     const CSRMatrix<int> &tree, vector<bool> &black_list1,
-                     int beta) {
+int beta_layer_bfs_1(int start, unique_ptr<QueueEntry[]> &q,
+                     const CSRMatrix<int> &tree,
+                     unique_ptr<bool[]> &black_list1, int beta) {
   int rear = 0;
   q[rear++] = {start, 0, -1};
   for (int idx = 0; idx < rear; idx++) {
@@ -321,10 +321,10 @@ const auto pair_hash = [](const std::pair<int, int> &p) {
 };
 
 int beta_layer_bfs_2(
-    int start, vector<QueueEntry> &q, const CSRMatrix<int> &tree,
-    const CSRMatrix<int> &off_tree_graph, vector<bool> &black_list1, int beta,
-    unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges,
-    vector<unsigned short> &banned_nodes) {
+    int start, unique_ptr<QueueEntry[]> &q, const CSRMatrix<int> &tree,
+    const CSRMatrix<int> &off_tree_graph, unique_ptr<bool[]> &black_list1,
+    int beta, unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges,
+    unique_ptr<int[]> &banned_nodes) {
   static unsigned short id = 1;
   if (id == 0) {
     id++;
@@ -382,16 +382,20 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
   auto off_tree_graph =
       build_csr_matrix(node_cnt, off_tree_edges_size, off_tree_edges);
   auto tree_graph = build_csr_matrix(node_cnt, tree_edges_size, tree_edges);
-  vector<int> edges_to_be_add;
-  vector<bool> black_list1(node_cnt + 1, false);
-  vector<unsigned short> banned_nodes(node_cnt + 1, 0);
-  unordered_set<pair<int, int>, decltype(pair_hash)> banned_edges(1024,
-                                                                  pair_hash);
-  vector<QueueEntry> q1(node_cnt), q2(node_cnt);
 
   int alpha = max(int(off_tree_edges_size / 25), 2);
+
+  vector<int> edges_to_be_add(alpha);
+  unique_ptr<bool[]> black_list1(new bool[node_cnt + 1]());
+  unique_ptr<int[]> banned_nodes(new int[node_cnt + 1]());
+  unordered_set<pair<int, int>, decltype(pair_hash)> banned_edges(1024,
+                                                                  pair_hash);
+  unique_ptr<QueueEntry[]> q1(new QueueEntry[node_cnt]),
+      q2(new QueueEntry[node_cnt]);
+
+  int edges_added_size = 0;
   for (int i = 0; i < off_tree_edges_size; ++i) {
-    if (edges_to_be_add.size() == alpha) {
+    if (edges_added_size == alpha) {
       break;
     }
     auto &e = off_tree_edges[i];
@@ -403,7 +407,7 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
             banned_edges.end()) {
       continue;
     }
-    edges_to_be_add.push_back(i);
+    edges_to_be_add[edges_added_size++] = i;
     int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
 #ifdef DEBUG
     printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
@@ -416,6 +420,7 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
     }
   }
   // magic_trace_stop_indicator();
+  edges_to_be_add.resize(edges_added_size);
   return edges_to_be_add;
 }
 
