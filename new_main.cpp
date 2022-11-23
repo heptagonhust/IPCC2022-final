@@ -10,6 +10,8 @@
 #include <iostream>
 #include <math.h>
 #include <memory>
+#include <oneapi/tbb.h>
+#include <oneapi/tbb/parallel_for.h>
 #include <queue>
 #include <stack>
 #include <string>
@@ -113,12 +115,11 @@ unique_ptr<int[]> get_unweighted_distance_bfs(const Edge *edges,
 void get_new_edges(const int &edge_cnt, Edge *edges, const int *deg,
                    const int *unweighted_distance) {
   ScopeTimer t_("get_new_edges");
-#pragma omp parallel for
-  for (int i = 0; i < edge_cnt; ++i) {
+  tbb::parallel_for(0, edge_cnt, [edges, deg, unweighted_distance](auto i) {
     edges[i].weight =
         edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
         (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
-  }
+  });
 }
 
 struct UnionFindSet {
@@ -214,64 +215,68 @@ void rmq_lca(const CSRMatrix<int> &tree, Edge *tree_edges, int query_size,
     return res;
   };
   t_.tick("vec init");
-#pragma omp parallel for
-  for (int i = 0; i < block_count; ++i) {
-    const int block_start = block_size * i;
-    const int block_end = min(block_start + block_size, dfn);
-    prefix_min_per_block[block_start] = pos[euler_series[block_start]];
-    for (int j = block_start + 1; j < block_end; ++j) {
-      prefix_min_per_block[j] =
-          min(pos[euler_series[j]], prefix_min_per_block[j - 1]);
-    }
-    postfix_min_per_block[block_end - 1] = pos[euler_series[block_end - 1]];
-    for (int j = block_end - 1; j > block_start; --j) {
-      postfix_min_per_block[j - 1] =
-          min(pos[euler_series[j - 1]], postfix_min_per_block[j]);
-    }
-    min_per_block[i] = postfix_min_per_block[block_start];
-  }
-#pragma omp parallel for
-  for (int i = 0; i < block_count; ++i) {
-    contiguous_block_min[idx_map(i, i)] = min_per_block[i];
-    for (int j = i + 1; j < block_count; ++j) {
-      contiguous_block_min[idx_map(i, j)] =
-          min(min_per_block[j], contiguous_block_min[idx_map(i, j - 1)]);
-    }
-  }
-  t_.tick("lca preprocess");
-#pragma omp parallel for
-  for (int i = 0; i < query_size; ++i) {
-    Edge &e = query_info[i];
-    const int l = min(pos[e.a], pos[e.b]);
-    const int r = max(pos[e.a], pos[e.b]);
-    const int l_block = l / block_size;
-    const int r_block = r / block_size;
-    int lca_pos = dfn;
-    if (l_block == r_block) {
-      for (int j = l; j <= r; ++j) {
-        if (pos[euler_series[j]] < lca_pos) {
-          lca_pos = pos[euler_series[j]];
+  tbb::parallel_for(
+      0, block_count,
+      [block_size, &prefix_min_per_block, dfn, &pos, &euler_series,
+       &postfix_min_per_block, &min_per_block](auto i) {
+        const int block_start = block_size * i;
+        const int block_end = min(block_start + block_size, dfn);
+        prefix_min_per_block[block_start] = pos[euler_series[block_start]];
+        for (int j = block_start + 1; j < block_end; ++j) {
+          prefix_min_per_block[j] =
+              min(pos[euler_series[j]], prefix_min_per_block[j - 1]);
         }
-      }
-    } else if (l_block + 1 == r_block) {
-      lca_pos = min(postfix_min_per_block[l], prefix_min_per_block[r]);
-    } else {
-      lca_pos = min(contiguous_block_min[idx_map(l_block + 1, r_block - 1)],
-                    min(postfix_min_per_block[l], prefix_min_per_block[r]));
-    }
-    const int lca = euler_series[lca_pos];
-    e.lca = lca;
-  }
+        postfix_min_per_block[block_end - 1] = pos[euler_series[block_end - 1]];
+        for (int j = block_end - 1; j > block_start; --j) {
+          postfix_min_per_block[j - 1] =
+              min(pos[euler_series[j - 1]], postfix_min_per_block[j]);
+        }
+        min_per_block[i] = postfix_min_per_block[block_start];
+      });
+  tbb::parallel_for(
+      0, block_count,
+      [&contiguous_block_min, &min_per_block, idx_map, block_count](auto i) {
+        contiguous_block_min[idx_map(i, i)] = min_per_block[i];
+        for (int j = i + 1; j < block_count; ++j) {
+          contiguous_block_min[idx_map(i, j)] =
+              min(min_per_block[j], contiguous_block_min[idx_map(i, j - 1)]);
+        }
+      });
+  t_.tick("lca preprocess");
+  tbb::parallel_for(
+      0, query_size,
+      [query_info, &pos, block_size, dfn, &euler_series, &postfix_min_per_block,
+       &prefix_min_per_block, &contiguous_block_min, idx_map](auto i) {
+        Edge &e = query_info[i];
+        const int l = min(pos[e.a], pos[e.b]);
+        const int r = max(pos[e.a], pos[e.b]);
+        const int l_block = l / block_size;
+        const int r_block = r / block_size;
+        int lca_pos = dfn;
+        if (l_block == r_block) {
+          for (int j = l; j <= r; ++j) {
+            if (pos[euler_series[j]] < lca_pos) {
+              lca_pos = pos[euler_series[j]];
+            }
+          }
+        } else if (l_block + 1 == r_block) {
+          lca_pos = min(postfix_min_per_block[l], prefix_min_per_block[r]);
+        } else {
+          lca_pos = min(contiguous_block_min[idx_map(l_block + 1, r_block - 1)],
+                        min(postfix_min_per_block[l], prefix_min_per_block[r]));
+        }
+        const int lca = euler_series[lca_pos];
+        e.lca = lca;
+      });
   t_.tick("lca query");
 }
 
 void sort_off_tree_edges(int edges_cnt, Edge *edges, const double *depth) {
   ScopeTimer t_("sort_off_tree_edges");
-#pragma omp parallel for
-  for (int i = 0; i < edges_cnt; ++i) {
+  tbb::parallel_for(0, edges_cnt, [edges, depth](auto i) {
     auto &e = edges[i];
     e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
-  }
+  });
   t_.tick("map edges weight");
 #ifdef DEBUG
   puts("unsorted_off_tree_edges");
