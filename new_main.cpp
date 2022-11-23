@@ -169,7 +169,7 @@ CSRMatrix<int> rebuild_tree(int node_cnt, int edge_cnt, const Edge *tree) {
   return build_csr_matrix</* use_edge_list */ true>(node_cnt, edge_cnt, tree);
 }
 
-constexpr int parallel_depth = 8;
+constexpr int parallel_depth = 5;
 
 void get_subtree_size(const CSRMatrix<int> &tree, const Edge *tree_edges,
                       int cur, int fa, int depth, double *weighted_depth,
@@ -228,7 +228,7 @@ void parallel_euler_tour(const CSRMatrix<int> &tree, const Edge *tree_edges,
                          int cur, int fa, const int *subtree_size,
                          const int *unweighted_depth, int dfn,
                          int *euler_series, int *pos) {
-  if (unweighted_depth[cur] <= parallel_depth) {
+  if (subtree_size[cur] >= 512 && subtree_size[cur] > subtree_size[fa] * 0.5) {
     euler_series[dfn] = cur;
     pos[cur] = dfn;
     dfn++;
