@@ -12,6 +12,7 @@
 #include <memory>
 #include <oneapi/tbb.h>
 #include <oneapi/tbb/parallel_for.h>
+#include <oneapi/tbb/spin_mutex.h>
 #include <queue>
 #include <stack>
 #include <string>
@@ -168,34 +169,31 @@ CSRMatrix<int> rebuild_tree(int node_cnt, int edge_cnt, const Edge *tree) {
   return build_csr_matrix</* use_edge_list */ true>(node_cnt, edge_cnt, tree);
 }
 
-constexpr int parallel_depth = 1;
+constexpr int parallel_depth = 8;
 
 void get_subtree_size(const CSRMatrix<int> &tree, const Edge *tree_edges,
-                      int cur, int fa, double *weighted_depth,
+                      int cur, int fa, int depth, double *weighted_depth,
                       int *unweighted_depth, int *subtree_size) {
-  if (unweighted_depth[cur] <= parallel_depth) {
+  unweighted_depth[cur] = depth;
+  if (depth <= parallel_depth) {
     oneapi::tbb::task_group g;
+    oneapi::tbb::spin_mutex lock;
     for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
       const Edge &e = tree_edges[tree.neighbors[i]];
       int v = cur ^ e.a ^ e.b;
       if (v != fa) {
         g.run([&tree, tree_edges, v, cur, weighted_depth, unweighted_depth,
-               subtree_size] {
-          get_subtree_size(tree, tree_edges, v, cur, weighted_depth,
+               subtree_size, depth, e, &lock] {
+          weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
+          get_subtree_size(tree, tree_edges, v, cur, depth + 1, weighted_depth,
                            unweighted_depth, subtree_size);
+          lock.lock();
+          subtree_size[cur] += subtree_size[v];
+          lock.unlock();
         });
       }
     }
     g.wait();
-    for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
-      const Edge &e = tree_edges[tree.neighbors[i]];
-      int v = cur ^ e.a ^ e.b;
-      if (v != fa) {
-        weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
-        unweighted_depth[v] = 1 + unweighted_depth[cur];
-        subtree_size[cur] += subtree_size[v];
-      }
-    }
   } else {
     for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
       const Edge &e = tree_edges[tree.neighbors[i]];
@@ -203,7 +201,7 @@ void get_subtree_size(const CSRMatrix<int> &tree, const Edge *tree_edges,
       if (v != fa) {
         weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
         unweighted_depth[v] = 1 + unweighted_depth[cur];
-        get_subtree_size(tree, tree_edges, v, cur, weighted_depth,
+        get_subtree_size(tree, tree_edges, v, cur, depth + 1, weighted_depth,
                          unweighted_depth, subtree_size);
         subtree_size[cur] += subtree_size[v];
       }
@@ -213,8 +211,9 @@ void get_subtree_size(const CSRMatrix<int> &tree, const Edge *tree_edges,
 
 void euler_tour(const CSRMatrix<int> &tree, const Edge *tree_edges, int cur,
                 int fa, int &dfn, int *euler_series, int *pos) {
-  euler_series[dfn++] = cur;
-  pos[cur] = dfn - 1;
+  euler_series[dfn] = cur;
+  pos[cur] = dfn;
+  dfn++;
   for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
     const Edge &e = tree_edges[tree.neighbors[i]];
     int v = cur ^ e.a ^ e.b;
@@ -262,17 +261,18 @@ void rmq_lca(const CSRMatrix<int> &tree, Edge *tree_edges, int query_size,
              Edge *query_info, int root, int node_cnt, double *weighted_depth,
              int *unweighted_depth) {
   ScopeTimer t_("rmq_lca");
-  std::unique_ptr<int[]> euler_series(new int[(node_cnt + 1) * 2 - 1]);
+  const int euler_series_len = 2 * node_cnt - 1;
+  std::unique_ptr<int[]> euler_series(new int[euler_series_len]);
+  std::fill_n(euler_series.get(), euler_series_len, -1);
   std::unique_ptr<int[]> pos(new int[node_cnt + 1]);
   std::unique_ptr<int[]> subtree_size(new int[node_cnt + 1]);
   std::fill_n(subtree_size.get(), node_cnt + 1, 1);
-  get_subtree_size(tree, tree_edges, root, root, weighted_depth,
+  get_subtree_size(tree, tree_edges, root, root, 0, weighted_depth,
                    unweighted_depth, subtree_size.get());
   t_.tick("get subtree size");
   parallel_euler_tour(tree, tree_edges, root, root, subtree_size.get(),
                       unweighted_depth, 0, euler_series.get(), pos.get());
   t_.tick("parallel euler tour");
-  const int euler_series_len = 2 * node_cnt - 1;
   const int block_size = sqrt(euler_series_len);
   const int block_count = (euler_series_len + block_size - 1) / block_size;
   std::unique_ptr<int[]> prefix_min_per_block(new int[euler_series_len]);
@@ -503,6 +503,8 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
 }
 
 int main(int argc, const char *argv[]) {
+  oneapi::tbb::global_control global_limit(
+      tbb::global_control::thread_stack_size, 16 * 1024 * 1024);
   // read input file
   const char *file = "byn1.mtx";
   if (argc > 2) {
