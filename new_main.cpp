@@ -495,9 +495,10 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
   auto off_tree_graph =
       build_csr_matrix<CSRValueType::neighbor_and_index, vec2>(
           node_cnt, off_tree_edges_size, off_tree_edges);
+  t_.tick("build graph");
   auto tree_graph = build_csr_matrix<CSRValueType::neighbor>(
       node_cnt, tree_edges_size, tree_edges);
-  t_.tick("build graph");
+  t_.tick("build tree");
   int alpha = max(int(off_tree_edges_size / 25), 2);
 
   vector<int> edges_to_be_add(alpha);
