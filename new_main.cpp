@@ -12,6 +12,7 @@
 #include <math.h>
 #include <memory>
 #include <oneapi/tbb.h>
+#include <oneapi/tbb/concurrent_hash_map.h>
 #include <oneapi/tbb/parallel_for.h>
 #include <oneapi/tbb/spin_mutex.h>
 #include <queue>
@@ -123,6 +124,11 @@ void get_new_edges(const int &edge_cnt, Edge *edges, const int *deg,
         edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
         (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
   });
+  // for (int i = 0; i < edge_cnt; i++) {
+  //   edges[i].weight =
+  //       edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
+  //       (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
+  // }
 }
 
 struct UnionFindSet {
@@ -404,16 +410,21 @@ int beta_layer_bfs_1(int start, unique_ptr<QueueEntry[]> &q,
   return rear;
 }
 
-const auto pair_hash = [](const std::pair<int, int> &p) {
-  return p.first * 31 + p.second;
+class PairHash {
+public:
+  static std::size_t hash(const pair<int, int> &key) {
+    return key.first * 31 + key.second;
+  }
+  static bool equal(const pair<int, int> &key1, const pair<int, int> &key2) {
+    return key1 == key2;
+  }
 };
 
-vector<pair<int, int>> beta_layer_bfs_2(
-    int start, unique_ptr<QueueEntry[]> &q, const CSRMatrix<int> &tree,
-    const CSRMatrix<int> &off_tree_graph, unique_ptr<bool[]> &black_list1,
-    int beta,
-    const unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges,
-    const atomic<int> *banned_nodes) {
+vector<pair<int, int>> beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
+                                        const CSRMatrix<int> &tree,
+                                        const CSRMatrix<int> &off_tree_graph,
+                                        unique_ptr<bool[]> &black_list1,
+                                        int beta) {
   vector<pair<int, int>> res{};
   int rear = 0;
   q[rear++] = {start, 0, -1};
@@ -456,26 +467,27 @@ void produce_ban_off_tree_edges(
     const Edge *tree_edges, const int off_tree_edges_size,
     const Edge *off_tree_edges, const int *depth, atomic<bool> &done,
     const atomic<int> *banned_nodes,
-    const unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges) {
+    const oneapi::tbb::concurrent_hash_map<pair<int, int>, bool, PairHash>
+        &banned_edges) {
   unique_ptr<QueueEntry[]> q1(new QueueEntry[node_cnt]);
   unique_ptr<QueueEntry[]> q2(new QueueEntry[node_cnt]);
   unique_ptr<bool[]> black_list1(new bool[node_cnt + 1]());
+  oneapi::tbb::concurrent_hash_map<pair<int, int>, bool,
+                                   PairHash>::const_accessor const_accessor;
   for (int i = thread_id; i < off_tree_edges_size && !done; i += num_producer) {
     auto &e = off_tree_edges[i];
     if (banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) {
       spsc.emplace(vector<pair<int, int>>{});
       continue;
     }
-    if (banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) !=
-        banned_edges.end()) {
+    if (banned_edges.find(const_accessor, {min(e.a, e.b), max(e.a, e.b)})) {
       spsc.emplace(vector<pair<int, int>>{});
       continue;
     }
     int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
     int size1 = beta_layer_bfs_1(e.a, q1, tree_graph, black_list1, beta);
-    auto ban_list =
-        beta_layer_bfs_2(e.b, q2, tree_graph, off_tree_graph, black_list1, beta,
-                         banned_edges, banned_nodes);
+    auto ban_list = beta_layer_bfs_2(e.b, q2, tree_graph, off_tree_graph,
+                                     black_list1, beta);
     spsc.emplace(ban_list);
 
     for (int j = 0; j < size1; j++) {
@@ -498,8 +510,17 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
 
   vector<int> edges_to_be_add(alpha);
   unique_ptr<atomic<int>[]> banned_nodes(new atomic<int>[node_cnt + 1]());
-  unordered_set<pair<int, int>, decltype(pair_hash)> banned_edges(1024,
-                                                                  pair_hash);
+  // unordered_set<pair<int, int>, decltype(PairHash)> banned_edges(1024,
+  //                                                                 PairHash);
+
+  oneapi::tbb::concurrent_hash_map<pair<int, int>, bool, PairHash> banned_edges(
+      PairHash{});
+
+  oneapi::tbb::concurrent_hash_map<pair<int, int>, bool,
+                                   PairHash>::const_accessor const_accessor;
+
+  oneapi::tbb::concurrent_hash_map<pair<int, int>, bool, PairHash>::accessor
+      accessor;
 
   std::thread threads[num_producer];
   SPSCQueue<vector<pair<int, int>>> spscs[num_producer];
@@ -530,8 +551,7 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
     while (!spscs[i % num_producer].front())
       ;
     if ((banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) ||
-        banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) !=
-            banned_edges.end()) {
+        banned_edges.find(const_accessor, {min(e.a, e.b), max(e.a, e.b)})) {
       spscs[i % num_producer].pop();
       continue;
     }
@@ -542,9 +562,9 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
       if (banned_nodes[u] == 0 &&
           banned_nodes[v] == 0) { // both remain unpainted
         banned_nodes[u] = banned_nodes[v] = mark_color;
-        mark_color ++;
+        mark_color++;
       } else { // each is painted
-        banned_edges.insert({min(u, v), max(u, v)});
+        banned_edges.insert(accessor, {min(u, v), max(u, v)});
       }
     }
     spscs[i % num_producer].pop();
