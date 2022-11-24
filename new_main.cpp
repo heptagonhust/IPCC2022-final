@@ -456,21 +456,19 @@ vector<vec3> beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
 
 const int num_producer = 16;
 
-void produce_ban_off_tree_edges(
-    int thread_id, SPSCQueue<vector<vec3>> &spsc, int node_cnt,
-    CSRMatrix<int> &tree_graph, CSRMatrix<vec2> &off_tree_graph,
-    const Edge *tree_edges, const int off_tree_edges_size,
-    const Edge *off_tree_edges, const int *depth, atomic<bool> &done,
-    const atomic<int> *banned_nodes, const atomic<bool> *edge_is_banned) {
+void produce_ban_off_tree_edges(int thread_id, SPSCQueue<vector<vec3>> &spsc,
+                                int node_cnt, CSRMatrix<int> &tree_graph,
+                                CSRMatrix<vec2> &off_tree_graph,
+                                const Edge *tree_edges,
+                                const int off_tree_edges_size,
+                                const Edge *off_tree_edges, const int *depth,
+                                atomic<bool> &done,
+                                const vector<bool> &edge_is_banned) {
   unique_ptr<QueueEntry[]> q1(new QueueEntry[node_cnt]);
   unique_ptr<QueueEntry[]> q2(new QueueEntry[node_cnt]);
   unique_ptr<bool[]> black_list1(new bool[node_cnt + 1]());
   for (int i = thread_id; i < off_tree_edges_size && !done; i += num_producer) {
     auto &e = off_tree_edges[i];
-    if (banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) {
-      spsc.emplace(vector<vec3>{});
-      continue;
-    }
 
     if (edge_is_banned[i]) {
       spsc.emplace(vector<vec3>{});
@@ -503,22 +501,20 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
   int alpha = max(int(off_tree_edges_size / 25), 2);
 
   vector<int> edges_to_be_add(alpha);
-  unique_ptr<atomic<int>[]> banned_nodes(new atomic<int>[node_cnt + 1]());
-  unique_ptr<atomic<bool>[]> edge_is_banned(
-      new atomic<bool>[off_tree_edges_size] {});
+  vector<bool> edge_is_banned(off_tree_edges_size);
 
   std::thread threads[num_producer];
   SPSCQueue<vector<vec3>> spscs[num_producer];
-  int mark_color = 1;
   atomic<bool> threads_done{false};
   for (int i = 0; i < num_producer; i++) {
     threads[i] = std::thread([&, i] {
-      produce_ban_off_tree_edges(
-          i, spscs[i], node_cnt, tree_graph, off_tree_graph, tree_edges,
-          off_tree_edges_size, off_tree_edges, depth, threads_done,
-          banned_nodes.get(), edge_is_banned.get());
+      produce_ban_off_tree_edges(i, spscs[i], node_cnt, tree_graph,
+                                 off_tree_graph, tree_edges,
+                                 off_tree_edges_size, off_tree_edges, depth,
+                                 threads_done, edge_is_banned);
     });
   }
+  t_.tick("launch threads");
 
   int edges_added_size = 0;
   for (int i = 0; i < off_tree_edges_size; ++i) {
@@ -536,9 +532,7 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
     while (!spscs[i % num_producer].front())
       ;
 
-    bool is_banned =
-        (banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) ||
-        edge_is_banned[i];
+    bool is_banned = edge_is_banned[i];
 
     if (is_banned) {
       spscs[i % num_producer].pop();
@@ -549,17 +543,12 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
 
     edges_to_be_add[edges_added_size++] = i;
     for (auto &[u, v, edge_idx] : *ban_list) {
-      if (banned_nodes[u] == 0 &&
-          banned_nodes[v] == 0) { // both remain unpainted
-        banned_nodes[u] = banned_nodes[v] = mark_color;
-        mark_color++;
-      } else { // each is painted
-        edge_is_banned[edge_idx] = true;
-      }
+      edge_is_banned[edge_idx] = true;
     }
     spscs[i % num_producer].pop();
   }
   threads_done = true;
+  t_.tick("consume data");
   for (auto &q : spscs) {
     if (q.front() != nullptr)
       q.pop();
@@ -567,7 +556,7 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
   for (int i = 0; i < num_producer; ++i) {
     threads[i].join();
   }
-
+  t_.tick("join threads");
   // magic_trace_stop_indicator();
   edges_to_be_add.resize(edges_added_size);
   return edges_to_be_add;
