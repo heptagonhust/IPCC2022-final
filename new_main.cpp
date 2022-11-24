@@ -36,22 +36,31 @@ extern "C" __attribute__((noinline)) void magic_trace_stop_indicator() {
   asm volatile("" ::: "memory");
 }
 template <typename T> struct CSRMatrix {
-  std::unique_ptr<T[]> row_indices;
+  std::unique_ptr<int[]> row_indices;
   std::unique_ptr<T[]> neighbors;
 
   CSRMatrix(const int &matrix_dim, const int &nonzero_count)
-      : row_indices(new T[matrix_dim + 1]), neighbors(new T[nonzero_count]) {}
+      : row_indices(new int[matrix_dim + 1]), neighbors(new T[nonzero_count]) {}
 };
 
-template <bool use_edge_list = false>
-CSRMatrix<int> build_csr_matrix(const int &node_cnt, const int &edge_cnt,
-                                const Edge *edges) {
+using vec2 = pair<int, int>;
+using vec3 = struct Triple { int first, second, third; };
+
+enum class CSRValueType {
+  index,
+  neighbor,
+  neighbor_and_index,
+};
+
+template <CSRValueType value_type = CSRValueType::index, class T = int>
+CSRMatrix<T> build_csr_matrix(const int &node_cnt, const int &edge_cnt,
+                              const Edge *edges) {
   vector<int> deg(node_cnt + 1);
   for (int i = 0; i < edge_cnt; ++i) {
     deg[edges[i].a]++;
     deg[edges[i].b]++;
   }
-  auto mat = CSRMatrix<int>(node_cnt + 1, edge_cnt * 2);
+  auto mat = CSRMatrix<T>(node_cnt + 1, edge_cnt * 2);
   int start_idx = 0;
   for (int i = 1; i <= node_cnt; i++) {
     mat.row_indices[i] = start_idx;
@@ -61,12 +70,15 @@ CSRMatrix<int> build_csr_matrix(const int &node_cnt, const int &edge_cnt,
   mat.row_indices[node_cnt + 1] = start_idx;
   for (int i = 0; i < edge_cnt; ++i) {
     const auto &e = edges[i];
-    if constexpr (use_edge_list) {
-      mat.neighbors[mat.row_indices[e.a]] = i;
-      mat.neighbors[mat.row_indices[e.b]] = i;
+    if constexpr (value_type == CSRValueType::index) {
+      mat.neighbors[mat.row_indices[e.a]] = T{i};
+      mat.neighbors[mat.row_indices[e.b]] = T{i};
+    } else if constexpr (value_type == CSRValueType::neighbor) {
+      mat.neighbors[mat.row_indices[e.a]] = T{e.b};
+      mat.neighbors[mat.row_indices[e.b]] = T{e.a};
     } else {
-      mat.neighbors[mat.row_indices[e.a]] = e.b;
-      mat.neighbors[mat.row_indices[e.b]] = e.a;
+      mat.neighbors[mat.row_indices[e.a]] = T{e.b, i};
+      mat.neighbors[mat.row_indices[e.b]] = T{e.a, i};
     }
     mat.row_indices[e.a]++;
     mat.row_indices[e.b]++;
@@ -169,7 +181,8 @@ void kruskal(int node_cnt, int edge_cnt, Edge *edges, Edge *tree_edges,
 
 CSRMatrix<int> rebuild_tree(int node_cnt, int edge_cnt, const Edge *tree) {
   ScopeTimer t_("rebuild_tree");
-  return build_csr_matrix</* use_edge_list */ true>(node_cnt, edge_cnt, tree);
+  return build_csr_matrix</* use_edge_list */ CSRValueType::index>(
+      node_cnt, edge_cnt, tree);
 }
 
 constexpr int parallel_depth = 7;
@@ -405,17 +418,11 @@ int beta_layer_bfs_1(int start, unique_ptr<QueueEntry[]> &q,
   return rear;
 }
 
-const auto pair_hash = [](const std::pair<int, int> &p) {
-  return p.first * 31 + p.second;
-};
-
-vector<pair<int, int>> beta_layer_bfs_2(
-    int start, unique_ptr<QueueEntry[]> &q, const CSRMatrix<int> &tree,
-    const CSRMatrix<int> &off_tree_graph, unique_ptr<bool[]> &black_list1,
-    int beta,
-    const unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges,
-    const atomic<int> *banned_nodes) {
-  vector<pair<int, int>> res{};
+vector<vec3> beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
+                              const CSRMatrix<int> &tree,
+                              const CSRMatrix<vec2> &off_tree_graph,
+                              unique_ptr<bool[]> &black_list1, int beta) {
+  vector<vec3> res{};
   int rear = 0;
   q[rear++] = {start, 0, -1};
   for (int idx = 0; idx < rear; idx++) {
@@ -424,7 +431,8 @@ vector<pair<int, int>> beta_layer_bfs_2(
     int cur_pre = q[idx].predecessor;
     for (int j = off_tree_graph.row_indices[cur_node];
          j < off_tree_graph.row_indices[cur_node + 1]; ++j) {
-      int v = off_tree_graph.neighbors[j];
+      int v = off_tree_graph.neighbors[j].first;
+      int edge_idx = off_tree_graph.neighbors[j].second;
       if (black_list1[v]) {
         // if (banned_nodes[cur_node] == 0 &&
         //     banned_nodes[cur_node] == banned_nodes[v]) {
@@ -432,7 +440,7 @@ vector<pair<int, int>> beta_layer_bfs_2(
         // } else {
         //   banned_edges.insert({min(cur_node, v), max(cur_node, v)});
         // }
-        res.push_back({cur_node, v});
+        res.push_back({cur_node, v, edge_idx});
       }
     }
     if (cur_layer == beta) {
@@ -452,37 +460,29 @@ vector<pair<int, int>> beta_layer_bfs_2(
 const int num_producer = 16;
 
 void produce_ban_off_tree_edges(
-    int thread_id, SPSCQueue<vector<pair<int, int>>> &spsc, int node_cnt,
-    CSRMatrix<int> &tree_graph, CSRMatrix<int> &off_tree_graph,
+    int thread_id, SPSCQueue<vector<vec3>> &spsc, int node_cnt,
+    CSRMatrix<int> &tree_graph, CSRMatrix<vec2> &off_tree_graph,
     const Edge *tree_edges, const int off_tree_edges_size,
     const Edge *off_tree_edges, const int *depth, atomic<bool> &done,
-    const atomic<int> *banned_nodes,
-    const unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges,
-    oneapi::tbb::rw_mutex &rwlock) {
+    const atomic<int> *banned_nodes, const atomic<bool> *edge_is_banned) {
   unique_ptr<QueueEntry[]> q1(new QueueEntry[node_cnt]);
   unique_ptr<QueueEntry[]> q2(new QueueEntry[node_cnt]);
   unique_ptr<bool[]> black_list1(new bool[node_cnt + 1]());
   for (int i = thread_id; i < off_tree_edges_size && !done; i += num_producer) {
     auto &e = off_tree_edges[i];
     if (banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) {
-      spsc.emplace(vector<pair<int, int>>{});
+      spsc.emplace(vector<vec3>{});
       continue;
     }
 
-    rwlock.lock_shared();
-    bool found_in_set =
-        banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) != banned_edges.end();
-    rwlock.unlock_shared();
-
-    if (found_in_set) {
-      spsc.emplace(vector<pair<int, int>>{});
+    if (edge_is_banned[i]) {
+      spsc.emplace(vector<vec3>{});
       continue;
     }
     int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
     int size1 = beta_layer_bfs_1(e.a, q1, tree_graph, black_list1, beta);
-    auto ban_list =
-        beta_layer_bfs_2(e.b, q2, tree_graph, off_tree_graph, black_list1, beta,
-                         banned_edges, banned_nodes);
+    auto ban_list = beta_layer_bfs_2(e.b, q2, tree_graph, off_tree_graph,
+                                     black_list1, beta);
     spsc.emplace(ban_list);
 
     for (int j = 0; j < size1; j++) {
@@ -498,20 +498,20 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
 
   ScopeTimer t_("add_off_tree_edges");
   auto off_tree_graph =
-      build_csr_matrix(node_cnt, off_tree_edges_size, off_tree_edges);
-  auto tree_graph = build_csr_matrix(node_cnt, tree_edges_size, tree_edges);
+      build_csr_matrix<CSRValueType::neighbor_and_index, vec2>(
+          node_cnt, off_tree_edges_size, off_tree_edges);
+  auto tree_graph = build_csr_matrix<CSRValueType::neighbor>(
+      node_cnt, tree_edges_size, tree_edges);
   t_.tick("build graph");
   int alpha = max(int(off_tree_edges_size / 25), 2);
 
   vector<int> edges_to_be_add(alpha);
   unique_ptr<atomic<int>[]> banned_nodes(new atomic<int>[node_cnt + 1]());
-  unordered_set<pair<int, int>, decltype(pair_hash)> banned_edges(1024,
-                                                                  pair_hash);
-
-  oneapi::tbb::rw_mutex rwlock{};
+  unique_ptr<atomic<bool>[]> edge_is_banned(
+      new atomic<bool>[off_tree_edges_size] {});
 
   std::thread threads[num_producer];
-  SPSCQueue<vector<pair<int, int>>> spscs[num_producer];
+  SPSCQueue<vector<vec3>> spscs[num_producer];
   int mark_color = 1;
   atomic<bool> threads_done{false};
   for (int i = 0; i < num_producer; i++) {
@@ -519,7 +519,7 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
       produce_ban_off_tree_edges(
           i, spscs[i], node_cnt, tree_graph, off_tree_graph, tree_edges,
           off_tree_edges_size, off_tree_edges, depth, threads_done,
-          banned_nodes.get(), banned_edges, rwlock);
+          banned_nodes.get(), edge_is_banned.get());
     });
   }
 
@@ -540,29 +540,24 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
       ;
 
     bool is_banned =
-        banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b];
-    if (!is_banned) {
-      rwlock.lock_shared();
-      is_banned = banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) !=
-                  banned_edges.end();
-      rwlock.unlock_shared();
-    }
+        (banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) ||
+        edge_is_banned[i];
+
     if (is_banned) {
       spscs[i % num_producer].pop();
       continue;
     }
+
     auto ban_list = spscs[i % num_producer].front();
 
     edges_to_be_add[edges_added_size++] = i;
-    for (auto &[u, v] : *ban_list) {
+    for (auto &[u, v, edge_idx] : *ban_list) {
       if (banned_nodes[u] == 0 &&
           banned_nodes[v] == 0) { // both remain unpainted
         banned_nodes[u] = banned_nodes[v] = mark_color;
         mark_color++;
       } else { // each is painted
-        rwlock.lock();
-        banned_edges.insert({min(u, v), max(u, v)});
-        rwlock.unlock();
+        edge_is_banned[edge_idx] = true;
       }
     }
     spscs[i % num_producer].pop();
@@ -621,8 +616,8 @@ int main(int argc, const char *argv[]) {
     degree[t]++;
     origin_edges[edges_cnt++] = Edge{f, t, w, w};
   }
-  auto G = build_csr_matrix</* use_edge_list */ true>(M, edges_cnt,
-                                                      origin_edges.get());
+  auto G =
+      build_csr_matrix<CSRValueType::index>(M, edges_cnt, origin_edges.get());
   fin.close();
   printf("edge_cnt: %d\n", edges_cnt);
   /**************************************************/
