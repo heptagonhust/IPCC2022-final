@@ -13,6 +13,7 @@
 #include <memory>
 #include <oneapi/tbb.h>
 #include <oneapi/tbb/parallel_for.h>
+#include <oneapi/tbb/rw_mutex.h>
 #include <oneapi/tbb/spin_mutex.h>
 #include <queue>
 #include <stack>
@@ -456,7 +457,8 @@ void produce_ban_off_tree_edges(
     const Edge *tree_edges, const int off_tree_edges_size,
     const Edge *off_tree_edges, const int *depth, atomic<bool> &done,
     const atomic<int> *banned_nodes,
-    const unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges) {
+    const unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges,
+    oneapi::tbb::rw_mutex &rwlock) {
   unique_ptr<QueueEntry[]> q1(new QueueEntry[node_cnt]);
   unique_ptr<QueueEntry[]> q2(new QueueEntry[node_cnt]);
   unique_ptr<bool[]> black_list1(new bool[node_cnt + 1]());
@@ -466,8 +468,13 @@ void produce_ban_off_tree_edges(
       spsc.emplace(vector<pair<int, int>>{});
       continue;
     }
-    if (banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) !=
-        banned_edges.end()) {
+
+    rwlock.lock_shared();
+    bool found_in_set =
+        banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) != banned_edges.end();
+    rwlock.unlock_shared();
+
+    if (found_in_set) {
       spsc.emplace(vector<pair<int, int>>{});
       continue;
     }
@@ -501,6 +508,8 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
   unordered_set<pair<int, int>, decltype(pair_hash)> banned_edges(1024,
                                                                   pair_hash);
 
+  oneapi::tbb::rw_mutex rwlock{};
+
   std::thread threads[num_producer];
   SPSCQueue<vector<pair<int, int>>> spscs[num_producer];
   int mark_color = 1;
@@ -510,7 +519,7 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
       produce_ban_off_tree_edges(
           i, spscs[i], node_cnt, tree_graph, off_tree_graph, tree_edges,
           off_tree_edges_size, off_tree_edges, depth, threads_done,
-          banned_nodes.get(), banned_edges);
+          banned_nodes.get(), banned_edges, rwlock);
     });
   }
 
@@ -529,9 +538,16 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
     // }
     while (!spscs[i % num_producer].front())
       ;
-    if ((banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) ||
-        banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) !=
-            banned_edges.end()) {
+
+    bool is_banned =
+        banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b];
+    if (!is_banned) {
+      rwlock.lock_shared();
+      is_banned = banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) !=
+                  banned_edges.end();
+      rwlock.unlock_shared();
+    }
+    if (is_banned) {
       spscs[i % num_producer].pop();
       continue;
     }
@@ -542,9 +558,11 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
       if (banned_nodes[u] == 0 &&
           banned_nodes[v] == 0) { // both remain unpainted
         banned_nodes[u] = banned_nodes[v] = mark_color;
-        mark_color ++;
+        mark_color++;
       } else { // each is painted
+        rwlock.lock();
         banned_edges.insert({min(u, v), max(u, v)});
+        rwlock.unlock();
       }
     }
     spscs[i % num_producer].pop();
