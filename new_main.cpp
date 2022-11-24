@@ -231,7 +231,7 @@ void euler_tour(const CSRMatrix<vec2> &tree, const Edge *tree_edges, int cur,
   dfn++;
   for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
     const Edge &e = tree_edges[tree.neighbors[i].second];
-    int v = cur ^ e.a ^ e.b;
+    int v = tree.neighbors[i].first;
     if (v != fa) {
       weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
       euler_tour(tree, tree_edges, v, cur, dfn, euler_series, pos,
@@ -252,7 +252,7 @@ void parallel_euler_tour(const CSRMatrix<vec2> &tree, const Edge *tree_edges,
     oneapi::tbb::task_group g;
     for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
       const Edge &e = tree_edges[tree.neighbors[i].second];
-      int v = cur ^ e.a ^ e.b;
+      int v = tree.neighbors[i].first;
       if (v != fa) {
         g.run([&tree, tree_edges, v, cur, subtree_size, unweighted_depth, dfn,
                euler_series, pos, weighted_depth, e]() {
