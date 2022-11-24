@@ -1,3 +1,4 @@
+#include "SPSCQueue.h"
 #include "timer.hpp"
 #include <algorithm>
 #include <boost/sort/sort.hpp>
@@ -17,6 +18,7 @@
 #include <unordered_set>
 #include <vector>
 using namespace std;
+using namespace rigtorp;
 
 // #define DEBUG
 struct Edge {
@@ -320,15 +322,13 @@ const auto pair_hash = [](const std::pair<int, int> &p) {
   return p.first * 31 + p.second;
 };
 
-int beta_layer_bfs_2(
+vector<pair<int, int>> beta_layer_bfs_2(
     int start, unique_ptr<QueueEntry[]> &q, const CSRMatrix<int> &tree,
     const CSRMatrix<int> &off_tree_graph, unique_ptr<bool[]> &black_list1,
-    int beta, unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges,
-    unique_ptr<int[]> &banned_nodes) {
-  static unsigned short id = 1;
-  if (id == 0) {
-    id++;
-  }
+    int beta,
+    const unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges,
+    const atomic<int> *banned_nodes) {
+  vector<pair<int, int>> res{};
   int rear = 0;
   q[rear++] = {start, 0, -1};
   for (int idx = 0; idx < rear; idx++) {
@@ -339,12 +339,13 @@ int beta_layer_bfs_2(
          j < off_tree_graph.row_indices[cur_node + 1]; ++j) {
       int v = off_tree_graph.neighbors[j];
       if (black_list1[v]) {
-        if (banned_nodes[cur_node] == 0 &&
-            banned_nodes[cur_node] == banned_nodes[v]) {
-          banned_nodes[cur_node] = banned_nodes[v] = id++;
-        } else {
-          banned_edges.insert({min(cur_node, v), max(cur_node, v)});
-        }
+        // if (banned_nodes[cur_node] == 0 &&
+        //     banned_nodes[cur_node] == banned_nodes[v]) {
+        //   banned_nodes[cur_node] = banned_nodes[v] = id++;
+        // } else {
+        //   banned_edges.insert({min(cur_node, v), max(cur_node, v)});
+        // }
+        res.push_back({cur_node, v});
       }
     }
     if (cur_layer == beta) {
@@ -358,7 +359,43 @@ int beta_layer_bfs_2(
       }
     }
   }
-  return rear;
+  return res;
+}
+
+const int num_producer = 16;
+
+void produce_ban_off_tree_edges(
+    int thread_id, SPSCQueue<vector<pair<int, int>>> &spsc, int node_cnt,
+    CSRMatrix<int> &tree_graph, CSRMatrix<int> &off_tree_graph,
+    const Edge *tree_edges, const int off_tree_edges_size,
+    const Edge *off_tree_edges, const int *depth, atomic<bool> &done,
+    const atomic<int> *banned_nodes,
+    const unordered_set<pair<int, int>, decltype(pair_hash)> &banned_edges) {
+  unique_ptr<QueueEntry[]> q1(new QueueEntry[node_cnt]);
+  unique_ptr<QueueEntry[]> q2(new QueueEntry[node_cnt]);
+  unique_ptr<bool[]> black_list1(new bool[node_cnt + 1]());
+  for (int i = thread_id; i < off_tree_edges_size && !done; i += num_producer) {
+    auto &e = off_tree_edges[i];
+    if (banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) {
+      spsc.emplace(vector<pair<int, int>>{});
+      continue;
+    }
+    if (banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) !=
+        banned_edges.end()) {
+      spsc.emplace(vector<pair<int, int>>{});
+      continue;
+    }
+    int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
+    int size1 = beta_layer_bfs_1(e.a, q1, tree_graph, black_list1, beta);
+    auto ban_list =
+        beta_layer_bfs_2(e.b, q2, tree_graph, off_tree_graph, black_list1, beta,
+                         banned_edges, banned_nodes);
+    spsc.emplace(ban_list);
+
+    for (int j = 0; j < size1; j++) {
+      black_list1[q1[j].node] = false;
+    }
+  }
 }
 
 vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
@@ -367,31 +404,29 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
                                const Edge *off_tree_edges, const int *depth) {
 
   ScopeTimer t_("add_off_tree_edges");
-  // vector<vector<int>> rebuilt_off_tree_graph(node_cnt + 1);
-  // vector<vector<int>> rebuilt_tree_graph(node_cnt + 1);
-  // for (int i = 0; i < off_tree_edges.size(); ++i) {
-  //   auto &e = off_tree_edges[i];
-  //   rebuilt_off_tree_graph[e.a].push_back(e.b);
-  //   rebuilt_off_tree_graph[e.b].push_back(e.a);
-  // }
-  // for (int i = 0; i < tree_edges.size(); ++i) {
-  //   auto &e = tree_edges[i];
-  //   rebuilt_tree_graph[e.a].push_back(e.b);
-  //   rebuilt_tree_graph[e.b].push_back(e.a);
-  // }
   auto off_tree_graph =
       build_csr_matrix(node_cnt, off_tree_edges_size, off_tree_edges);
   auto tree_graph = build_csr_matrix(node_cnt, tree_edges_size, tree_edges);
-
+  t_.tick("build graph");
   int alpha = max(int(off_tree_edges_size / 25), 2);
 
   vector<int> edges_to_be_add(alpha);
-  unique_ptr<bool[]> black_list1(new bool[node_cnt + 1]());
-  unique_ptr<int[]> banned_nodes(new int[node_cnt + 1]());
+  unique_ptr<atomic<int>[]> banned_nodes(new atomic<int>[node_cnt + 1]());
   unordered_set<pair<int, int>, decltype(pair_hash)> banned_edges(1024,
                                                                   pair_hash);
-  unique_ptr<QueueEntry[]> q1(new QueueEntry[node_cnt]),
-      q2(new QueueEntry[node_cnt]);
+
+  std::thread threads[num_producer];
+  SPSCQueue<vector<pair<int, int>>> spscs[num_producer];
+  int mark_color = 1;
+  atomic<bool> threads_done{false};
+  for (int i = 0; i < num_producer; i++) {
+    threads[i] = std::thread([&, i] {
+      produce_ban_off_tree_edges(
+          i, spscs[i], node_cnt, tree_graph, off_tree_graph, tree_edges,
+          off_tree_edges_size, off_tree_edges, depth, threads_done,
+          banned_nodes.get(), banned_edges);
+    });
+  }
 
   int edges_added_size = 0;
   for (int i = 0; i < off_tree_edges_size; ++i) {
@@ -399,26 +434,44 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
       break;
     }
     auto &e = off_tree_edges[i];
-    if (banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) {
-      continue;
-    }
-    if ((banned_nodes[e.a] != 0 || banned_nodes[e.b] != 0) &&
+    // if (banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) {
+    //   continue;
+    // }
+    // if (banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) !=
+    //     banned_edges.end()) {
+    //   continue;
+    // }
+    while (!spscs[i % num_producer].front())
+      ;
+    if ((banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) ||
         banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) !=
             banned_edges.end()) {
+      spscs[i % num_producer].pop();
       continue;
     }
+    auto ban_list = spscs[i % num_producer].front();
+
     edges_to_be_add[edges_added_size++] = i;
-    int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
-#ifdef DEBUG
-    printf("beta: %d, (%d, %d)\n", beta, e.a, e.b);
-#endif
-    int size1 = beta_layer_bfs_1(e.a, q1, tree_graph, black_list1, beta);
-    beta_layer_bfs_2(e.b, q2, tree_graph, off_tree_graph, black_list1, beta,
-                     banned_edges, banned_nodes);
-    for (int j = 0; j < size1; j++) {
-      black_list1[q1[j].node] = false;
+    for (auto &[u, v] : *ban_list) {
+      if (banned_nodes[u] == 0 &&
+          banned_nodes[v] == 0) { // both remain unpainted
+        banned_nodes[u] = banned_nodes[v] = mark_color;
+        mark_color ++;
+      } else { // each is painted
+        banned_edges.insert({min(u, v), max(u, v)});
+      }
     }
+    spscs[i % num_producer].pop();
   }
+  threads_done = true;
+  for (auto &q : spscs) {
+    if (q.front() != nullptr)
+      q.pop();
+  }
+  for (int i = 0; i < num_producer; ++i) {
+    threads[i].join();
+  }
+
   // magic_trace_stop_indicator();
   edges_to_be_add.resize(edges_added_size);
   return edges_to_be_add;
