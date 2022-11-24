@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <math.h>
 #include <memory>
@@ -392,7 +393,7 @@ struct QueueEntry {
 };
 
 int beta_layer_bfs_1(int start, unique_ptr<QueueEntry[]> &q,
-                     const CSRMatrix<int> &tree,
+                     const CSRMatrix<vec2> &tree,
                      unique_ptr<bool[]> &black_list1, int beta) {
   int rear = 0;
   q[rear++] = {start, 0, -1};
@@ -406,7 +407,7 @@ int beta_layer_bfs_1(int start, unique_ptr<QueueEntry[]> &q,
     }
     for (int j = tree.row_indices[cur_node]; j < tree.row_indices[cur_node + 1];
          ++j) {
-      int v = tree.neighbors[j];
+      int v = tree.neighbors[j].first;
       if (cur_pre != v) {
         q[rear++] = {v, cur_layer + 1, cur_node};
       }
@@ -416,7 +417,7 @@ int beta_layer_bfs_1(int start, unique_ptr<QueueEntry[]> &q,
 }
 
 vector<vec3> beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
-                              const CSRMatrix<int> &tree,
+                              const CSRMatrix<vec2> &tree,
                               const CSRMatrix<vec2> &off_tree_graph,
                               unique_ptr<bool[]> &black_list1, int beta) {
   vector<vec3> res{};
@@ -445,7 +446,7 @@ vector<vec3> beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
     }
     for (int j = tree.row_indices[cur_node]; j < tree.row_indices[cur_node + 1];
          ++j) {
-      int v = tree.neighbors[j];
+      int v = tree.neighbors[j].first;
       if (v != cur_pre) {
         q[rear++] = {v, cur_layer + 1, cur_node};
       }
@@ -457,12 +458,11 @@ vector<vec3> beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
 const int num_producer = 16;
 
 void produce_ban_off_tree_edges(int thread_id, SPSCQueue<vector<vec3>> &spsc,
-                                int node_cnt, CSRMatrix<int> &tree_graph,
-                                CSRMatrix<vec2> &off_tree_graph,
-                                const Edge *tree_edges,
+                                int node_cnt, const CSRMatrix<vec2> &tree_graph,
+                                const CSRMatrix<vec2> &off_tree_graph,
                                 const int off_tree_edges_size,
                                 const Edge *off_tree_edges, const int *depth,
-                                atomic<bool> &done,
+                                const atomic<bool> &done,
                                 const vector<bool> &edge_is_banned) {
   unique_ptr<QueueEntry[]> q1(new QueueEntry[node_cnt]);
   unique_ptr<QueueEntry[]> q2(new QueueEntry[node_cnt]);
@@ -487,7 +487,7 @@ void produce_ban_off_tree_edges(int thread_id, SPSCQueue<vector<vec3>> &spsc,
 }
 
 vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
-                               const Edge *tree_edges,
+                               const CSRMatrix<vec2> &tree_graph,
                                const int off_tree_edges_size,
                                const Edge *off_tree_edges, const int *depth) {
 
@@ -496,9 +496,6 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
       build_csr_matrix<CSRValueType::neighbor_and_index, vec2>(
           node_cnt, off_tree_edges_size, off_tree_edges);
   t_.tick("build graph");
-  auto tree_graph = build_csr_matrix<CSRValueType::neighbor>(
-      node_cnt, tree_edges_size, tree_edges);
-  t_.tick("build tree");
   int alpha = max(int(off_tree_edges_size / 25), 2);
 
   vector<int> edges_to_be_add(alpha);
@@ -510,9 +507,9 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
   for (int i = 0; i < num_producer; i++) {
     threads[i] = std::thread([&, i] {
       produce_ban_off_tree_edges(i, spscs[i], node_cnt, tree_graph,
-                                 off_tree_graph, tree_edges,
-                                 off_tree_edges_size, off_tree_edges, depth,
-                                 threads_done, edge_is_banned);
+                                 off_tree_graph, off_tree_edges_size,
+                                 off_tree_edges, depth, threads_done,
+                                 edge_is_banned);
     });
   }
   t_.tick("launch threads");
@@ -652,9 +649,9 @@ int main(int argc, const char *argv[]) {
   }
 #endif
 
-  vector<int> res = add_off_tree_edges(
-      M, tree_edges_size, tree_edges.get(), off_tree_edges_size,
-      off_tree_edges.get(), tree_unweighted_depth.get());
+  vector<int> res =
+      add_off_tree_edges(M, tree_edges_size, new_tree, off_tree_edges_size,
+                         off_tree_edges.get(), tree_unweighted_depth.get());
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +
                                      (end.tv_usec - start.tv_usec) / 1000.0);
