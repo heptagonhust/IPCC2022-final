@@ -105,7 +105,7 @@ int largest_volume_node(const int &node_cnt, const double *volume) {
 }
 
 unique_ptr<int[]> get_unweighted_distance_bfs(const Edge *edges,
-                                              const CSRMatrix<int> &G,
+                                              const CSRMatrix<vec2> &G,
                                               int start, int node_cnt) {
   ScopeTimer t_("get_unweighted_distance_bfs");
   unique_ptr<int[]> res(new int[node_cnt + 1]{});
@@ -117,8 +117,7 @@ unique_ptr<int[]> get_unweighted_distance_bfs(const Edge *edges,
     int top = q.front();
     q.pop();
     for (int i = G.row_indices[top]; i < G.row_indices[top + 1]; ++i) {
-      const Edge &e = edges[G.neighbors[i]];
-      int v = top ^ e.a ^ e.b;
+      int v = G.neighbors[i].first;
       if (!vis[v]) {
         res[v] = res[top] + 1;
         q.push(v);
@@ -600,8 +599,8 @@ int main(int argc, const char *argv[]) {
     degree[t]++;
     origin_edges[edges_cnt++] = Edge{f, t, w, w};
   }
-  auto G =
-      build_csr_matrix<CSRValueType::index>(M, edges_cnt, origin_edges.get());
+  auto G = build_csr_matrix<CSRValueType::neighbor_and_index, vec2>(
+      M, edges_cnt, origin_edges.get());
   fin.close();
   printf("edge_cnt: %d\n", edges_cnt);
   /**************************************************/
