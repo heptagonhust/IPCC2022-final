@@ -15,8 +15,6 @@
 #include <memory>
 #include <oneapi/tbb.h>
 #include <oneapi/tbb/parallel_for.h>
-#include <oneapi/tbb/rw_mutex.h>
-#include <oneapi/tbb/spin_mutex.h>
 #include <queue>
 #include <stack>
 #include <string>
@@ -132,11 +130,19 @@ unique_ptr<int[]> get_unweighted_distance_bfs(const Edge *edges,
 void get_new_edges(const int &edge_cnt, Edge *edges, const int *deg,
                    const int *unweighted_distance) {
   ScopeTimer t_("get_new_edges");
-  tbb::parallel_for(0, edge_cnt, [edges, deg, unweighted_distance](auto i) {
-    edges[i].weight =
-        edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
-        (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
-  });
+  if (edge_cnt > 400000) {
+    for (int i = 0; i < edge_cnt; ++i) {
+      edges[i].weight =
+          edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
+          (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
+    }
+  } else {
+    tbb::parallel_for(0, edge_cnt, [edges, deg, unweighted_distance](auto i) {
+      edges[i].weight =
+          edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
+          (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
+    });
+  }
 }
 
 struct UnionFindSet {
@@ -483,7 +489,7 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
 
 int main(int argc, const char *argv[]) {
   oneapi::tbb::global_control global_limit(
-      tbb::global_control::thread_stack_size, 16 * 1024 * 1024);
+      oneapi::tbb::global_control::max_allowed_parallelism, 32);
   // read input file
   const char *file = "byn1.mtx";
   if (argc > 2) {
