@@ -186,90 +186,21 @@ CSRMatrix<vec2> rebuild_tree(int node_cnt, int edge_cnt, const Edge *tree) {
                           vec2>(node_cnt, edge_cnt, tree);
 }
 
-constexpr int parallel_depth = 7;
-void get_subtree_size(const CSRMatrix<vec2> &tree, int cur, int fa, int depth,
-                      int *unweighted_depth, int *subtree_size) {
-  for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
-    int v = tree.neighbors[i].first;
-    if (v != fa) {
-      unweighted_depth[v] = 1 + unweighted_depth[cur];
-      get_subtree_size(tree, v, cur, depth + 1, unweighted_depth, subtree_size);
-      subtree_size[cur] += subtree_size[v];
-    }
-  }
-}
-
-void parallel_get_subtree_size(const CSRMatrix<vec2> &tree, int cur, int fa,
-                               int depth, int *unweighted_depth,
-                               int *subtree_size) {
-  unweighted_depth[cur] = depth;
-  if (depth < parallel_depth) {
-    oneapi::tbb::task_group g;
-    oneapi::tbb::spin_mutex lock;
-    for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
-      int v = tree.neighbors[i].first;
-      if (v != fa) {
-        g.run([&tree, v, cur, unweighted_depth, subtree_size, depth, &lock] {
-          parallel_get_subtree_size(tree, v, cur, depth + 1, unweighted_depth,
-                                    subtree_size);
-          lock.lock();
-          subtree_size[cur] += subtree_size[v];
-          lock.unlock();
-        });
-      }
-    }
-    g.wait();
-  } else {
-    get_subtree_size(tree, cur, fa, depth, unweighted_depth, subtree_size);
-  }
-}
-
-void euler_tour(const CSRMatrix<vec2> &tree, const Edge *tree_edges, int cur,
-                int fa, int &dfn, int *euler_series, int *pos,
-                double *weighted_depth) {
-  euler_series[dfn] = cur;
-  pos[cur] = dfn;
-  dfn++;
+void euler_tour(const CSRMatrix<vec2> &tree, Edge *tree_edges, int cur, int fa,
+                int &dfn, double *weighted_depth, int *unweighted_depth,
+                int *euler_series, int *pos) {
+  euler_series[dfn++] = cur;
+  pos[cur] = dfn - 1;
   for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
     const Edge &e = tree_edges[tree.neighbors[i].second];
     int v = tree.neighbors[i].first;
     if (v != fa) {
       weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
-      euler_tour(tree, tree_edges, v, cur, dfn, euler_series, pos,
-                 weighted_depth);
+      unweighted_depth[v] = 1 + unweighted_depth[cur];
+      euler_tour(tree, tree_edges, v, cur, dfn, weighted_depth,
+                 unweighted_depth, euler_series, pos);
       euler_series[dfn++] = cur;
     }
-  }
-}
-
-void parallel_euler_tour(const CSRMatrix<vec2> &tree, const Edge *tree_edges,
-                         int cur, int fa, const int *subtree_size,
-                         const int *unweighted_depth, int dfn,
-                         int *euler_series, int *pos, double *weighted_depth) {
-  if (subtree_size[cur] >= 512 && subtree_size[cur] > subtree_size[fa] * 0.5) {
-    euler_series[dfn] = cur;
-    pos[cur] = dfn;
-    dfn++;
-    oneapi::tbb::task_group g;
-    for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
-      const Edge &e = tree_edges[tree.neighbors[i].second];
-      int v = tree.neighbors[i].first;
-      if (v != fa) {
-        g.run([&tree, tree_edges, v, cur, subtree_size, unweighted_depth, dfn,
-               euler_series, pos, weighted_depth, e]() {
-          weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
-          parallel_euler_tour(tree, tree_edges, v, cur, subtree_size,
-                              unweighted_depth, dfn, euler_series, pos,
-                              weighted_depth);
-        });
-        dfn += subtree_size[v] * 2 - 1;
-        euler_series[dfn++] = cur;
-      }
-    }
-    g.wait();
-  } else {
-    euler_tour(tree, tree_edges, cur, fa, dfn, euler_series, pos,
-               weighted_depth);
   }
 }
 
@@ -284,17 +215,11 @@ void rmq_lca(const CSRMatrix<vec2> &tree, Edge *tree_edges, int query_size,
   ScopeTimer t_("rmq_lca");
   const int euler_series_len = 2 * node_cnt - 1;
   std::unique_ptr<int[]> euler_series(new int[euler_series_len]);
-  std::fill_n(euler_series.get(), euler_series_len, -1);
   std::unique_ptr<int[]> pos(new int[node_cnt + 1]);
-  std::unique_ptr<int[]> subtree_size(new int[node_cnt + 1]);
-  std::fill_n(subtree_size.get(), node_cnt + 1, 1);
-  parallel_get_subtree_size(tree, root, root, 0, unweighted_depth,
-                            subtree_size.get());
-  t_.tick("get subtree size");
-  parallel_euler_tour(tree, tree_edges, root, root, subtree_size.get(),
-                      unweighted_depth, 0, euler_series.get(), pos.get(),
-                      weighted_depth);
-  t_.tick("parallel euler tour");
+  int dfn = 0;
+  euler_tour(tree, tree_edges, root, root, dfn, weighted_depth,
+             unweighted_depth, euler_series.get(), pos.get());
+  t_.tick("euler tour");
   const int block_size = sqrt(euler_series_len);
   const int block_count = (euler_series_len + block_size - 1) / block_size;
   std::unique_ptr<int[]> prefix_min_per_block(new int[euler_series_len]);
@@ -309,33 +234,28 @@ void rmq_lca(const CSRMatrix<vec2> &tree, Edge *tree_edges, int query_size,
     return res;
   };
   t_.tick("vec init");
-  tbb::parallel_for(
-      0, block_count,
-      [block_size, &prefix_min_per_block, euler_series_len, &pos, &euler_series,
-       &postfix_min_per_block, &min_per_block](auto i) {
-        const int block_start = block_size * i;
-        const int block_end = min(block_start + block_size, euler_series_len);
-        prefix_min_per_block[block_start] = pos[euler_series[block_start]];
-        for (int j = block_start + 1; j < block_end; ++j) {
-          prefix_min_per_block[j] =
-              min(pos[euler_series[j]], prefix_min_per_block[j - 1]);
-        }
-        postfix_min_per_block[block_end - 1] = pos[euler_series[block_end - 1]];
-        for (int j = block_end - 1; j > block_start; --j) {
-          postfix_min_per_block[j - 1] =
-              min(pos[euler_series[j - 1]], postfix_min_per_block[j]);
-        }
-        min_per_block[i] = postfix_min_per_block[block_start];
-      });
-  tbb::parallel_for(
-      0, block_count,
-      [&contiguous_block_min, &min_per_block, idx_map, block_count](auto i) {
-        contiguous_block_min[idx_map(i, i)] = min_per_block[i];
-        for (int j = i + 1; j < block_count; ++j) {
-          contiguous_block_min[idx_map(i, j)] =
-              min(min_per_block[j], contiguous_block_min[idx_map(i, j - 1)]);
-        }
-      });
+  for (int i = 0; i < block_count; ++i) {
+    const int block_start = block_size * i;
+    const int block_end = min(block_start + block_size, euler_series_len);
+    prefix_min_per_block[block_start] = pos[euler_series[block_start]];
+    for (int j = block_start + 1; j < block_end; ++j) {
+      prefix_min_per_block[j] =
+          min(pos[euler_series[j]], prefix_min_per_block[j - 1]);
+    }
+    postfix_min_per_block[block_end - 1] = pos[euler_series[block_end - 1]];
+    for (int j = block_end - 1; j > block_start; --j) {
+      postfix_min_per_block[j - 1] =
+          min(pos[euler_series[j - 1]], postfix_min_per_block[j]);
+    }
+    min_per_block[i] = postfix_min_per_block[block_start];
+  }
+  for (int i = 0; i < block_count; ++i) {
+    contiguous_block_min[idx_map(i, i)] = min_per_block[i];
+    for (int j = i + 1; j < block_count; ++j) {
+      contiguous_block_min[idx_map(i, j)] =
+          min(min_per_block[j], contiguous_block_min[idx_map(i, j - 1)]);
+    }
+  }
   t_.tick("lca preprocess");
   tbb::parallel_for(
       0, query_size,
