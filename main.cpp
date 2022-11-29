@@ -33,19 +33,15 @@ struct Edge {
   bool operator<(const Edge &rhs) const { return this->weight > rhs.weight; }
 };
 
-extern "C" __attribute__((noinline)) void magic_trace_stop_indicator() {
-  asm volatile("" ::: "memory");
-}
 template <typename T> struct CSRMatrix {
   std::unique_ptr<int[]> row_indices;
-  std::unique_ptr<T[]> neighbors;
+  std::unique_ptr<T[]> elems;
 
   CSRMatrix(const int &matrix_dim, const int &nonzero_count)
-      : row_indices(new int[matrix_dim + 1]), neighbors(new T[nonzero_count]) {}
+      : row_indices(new int[matrix_dim + 1]), elems(new T[nonzero_count]) {}
 };
 
 using vec2 = pair<int, int>;
-using vec3 = struct Triple { int first, second, third; };
 
 enum class CSRValueType {
   index,
@@ -72,14 +68,14 @@ CSRMatrix<T> build_csr_matrix(const int &node_cnt, const int &edge_cnt,
   for (int i = 0; i < edge_cnt; ++i) {
     const auto &e = edges[i];
     if constexpr (value_type == CSRValueType::index) {
-      mat.neighbors[mat.row_indices[e.a]] = T{i};
-      mat.neighbors[mat.row_indices[e.b]] = T{i};
+      mat.elems[mat.row_indices[e.a]] = T{i};
+      mat.elems[mat.row_indices[e.b]] = T{i};
     } else if constexpr (value_type == CSRValueType::neighbor) {
-      mat.neighbors[mat.row_indices[e.a]] = T{e.b};
-      mat.neighbors[mat.row_indices[e.b]] = T{e.a};
+      mat.elems[mat.row_indices[e.a]] = T{e.b};
+      mat.elems[mat.row_indices[e.b]] = T{e.a};
     } else {
-      mat.neighbors[mat.row_indices[e.a]] = T{e.b, i};
-      mat.neighbors[mat.row_indices[e.b]] = T{e.a, i};
+      mat.elems[mat.row_indices[e.a]] = T{e.b, i};
+      mat.elems[mat.row_indices[e.b]] = T{e.a, i};
     }
     mat.row_indices[e.a]++;
     mat.row_indices[e.b]++;
@@ -117,7 +113,7 @@ unique_ptr<int[]> get_unweighted_distance_bfs(const Edge *edges,
     int top = q.front();
     q.pop();
     for (int i = G.row_indices[top]; i < G.row_indices[top + 1]; ++i) {
-      int v = G.neighbors[i].first;
+      int v = G.elems[i].first;
       if (!vis[v]) {
         res[v] = res[top] + 1;
         q.push(v);
@@ -160,8 +156,6 @@ void kruskal(int node_cnt, int edge_cnt, Edge *edges, Edge *tree_edges,
   ScopeTimer t_("kruskal");
   stable_sort(execution::par_unseq, edges, edges + edge_cnt);
   t_.tick("sort edges");
-  // tree_edges.reserve(node_cnt - 1);
-  // off_tree_edges.reserve(edge_cnt - (node_cnt - 1));
   UnionFindSet ufs(node_cnt + 1);
   int edge_index = 0, tree_edges_size = 0, off_tree_edges_size = 0;
   for (; tree_edges_size != node_cnt - 1; ++edge_index) {
@@ -192,8 +186,8 @@ void euler_tour(const CSRMatrix<vec2> &tree, Edge *tree_edges, int cur, int fa,
   euler_series[dfn++] = cur;
   pos[cur] = dfn - 1;
   for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
-    const Edge &e = tree_edges[tree.neighbors[i].second];
-    int v = tree.neighbors[i].first;
+    const Edge &e = tree_edges[tree.elems[i].second];
+    int v = tree.elems[i].first;
     if (v != fa) {
       weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
       unweighted_depth[v] = 1 + unweighted_depth[cur];
@@ -230,7 +224,6 @@ void rmq_lca(const CSRMatrix<vec2> &tree, Edge *tree_edges, int query_size,
   const auto idx_map = [&block_count](int i, int j) {
     const int col_idx = j - i;
     const int res = (block_count + block_count - i + 1) * i / 2 + col_idx;
-    // printf("(%d, %d/%d): %d\n", i, j, block_count, res);
     return res;
   };
   t_.tick("vec init");
@@ -293,12 +286,6 @@ void sort_off_tree_edges(int edges_cnt, Edge *edges, const double *depth) {
     e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
   });
   t_.tick("map edges weight");
-#ifdef DEBUG
-  puts("unsorted_off_tree_edges");
-  for (auto &x : edges) {
-    printf("%d %d %lf %lf\n", x.a, x.b, x.weight, x.origin_weight);
-  }
-#endif
   stable_sort(execution::par_unseq, edges, edges + edges_cnt);
   t_.tick("sort edges");
 }
@@ -327,7 +314,7 @@ int beta_layer_bfs_1(int start, unique_ptr<QueueEntry[]> &q,
     }
     for (int j = tree.row_indices[cur_node]; j < tree.row_indices[cur_node + 1];
          ++j) {
-      int v = tree.neighbors[j].first;
+      int v = tree.elems[j].first;
       if (cur_pre != v) {
         q[rear++] = {v, cur_layer + 1, cur_node};
       }
@@ -349,15 +336,9 @@ void beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
     int cur_pre = q[idx].predecessor;
     for (int j = off_tree_graph.row_indices[cur_node];
          j < off_tree_graph.row_indices[cur_node + 1]; ++j) {
-      int v = off_tree_graph.neighbors[j].first;
-      int edge_idx = off_tree_graph.neighbors[j].second;
+      int v = off_tree_graph.elems[j].first;
+      int edge_idx = off_tree_graph.elems[j].second;
       if (black_list1[v]) {
-        // if (banned_nodes[cur_node] == 0 &&
-        //     banned_nodes[cur_node] == banned_nodes[v]) {
-        //   banned_nodes[cur_node] = banned_nodes[v] = id++;
-        // } else {
-        //   banned_edges.insert({min(cur_node, v), max(cur_node, v)});
-        // }
         spsc.push(edge_idx);
       }
     }
@@ -366,7 +347,7 @@ void beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
     }
     for (int j = tree.row_indices[cur_node]; j < tree.row_indices[cur_node + 1];
          ++j) {
-      int v = tree.neighbors[j].first;
+      int v = tree.elems[j].first;
       if (v != cur_pre) {
         q[rear++] = {v, cur_layer + 1, cur_node};
       }
@@ -439,13 +420,7 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
       break;
     }
     auto &e = off_tree_edges[i];
-    // if (banned_nodes[e.a] != 0 && banned_nodes[e.a] == banned_nodes[e.b]) {
-    //   continue;
-    // }
-    // if (banned_edges.find({min(e.a, e.b), max(e.a, e.b)}) !=
-    //     banned_edges.end()) {
-    //   continue;
-    // }
+
     while (!spscs[i % num_producer].front()) {
       _mm_pause();
     }
@@ -464,7 +439,6 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
       edge_is_banned[edge_idx] = true;
     }
   }
-  magic_trace_stop_indicator();
   threads_done = true;
   t_.tick("consume data");
   for (auto &q : spscs) {
@@ -480,8 +454,6 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
 }
 
 int main(int argc, const char *argv[]) {
-  oneapi::tbb::global_control global_limit(
-      oneapi::tbb::global_control::max_allowed_parallelism, 32);
   // read input file
   const char *file = "byn1.mtx";
   if (argc > 2) {
@@ -528,6 +500,8 @@ int main(int argc, const char *argv[]) {
   /**************************************************/
   /***************** Start timing *******************/
   /**************************************************/
+  oneapi::tbb::global_control global_limit(
+      oneapi::tbb::global_control::max_allowed_parallelism, 32);
   struct timeval start, end;
   gettimeofday(&start, NULL);
   int r_node = largest_volume_node(M, volume.get());
@@ -545,30 +519,14 @@ int main(int argc, const char *argv[]) {
   kruskal(M, edges_cnt, new_edges.get(), tree_edges.get(),
           off_tree_edges.get());
 
-#ifdef DEBUG
-  puts("kruscal results: ");
-  for (auto &x : tree_edges) {
-    printf("%d %d %lf %lf\n", x.a, x.b, x.weight, x.origin_weight);
-  }
-#endif
-
   auto new_tree = rebuild_tree(M, tree_edges_size, tree_edges.get());
   unique_ptr<double[]> tree_weighted_depth(new double[M + 1]);
   unique_ptr<int[]> tree_unweighted_depth(new int[M + 1]);
   rmq_lca(new_tree, tree_edges.get(), off_tree_edges_size, off_tree_edges.get(),
           r_node, M, tree_weighted_depth.get(), tree_unweighted_depth.get());
-  // tarjan_lca(new_tree, tree_edges, off_tree_edges, r_node, M,
-  //            tree_weighted_depth, tree_unweighted_depth);
 
   sort_off_tree_edges(off_tree_edges_size, off_tree_edges.get(),
                       tree_weighted_depth.get());
-
-#ifdef DEBUG
-  puts("sorted off_tree_edges: ");
-  for (auto &x : off_tree_edges) {
-    printf("%d %d %.16lf %.16lf\n", x.a, x.b, x.weight, x.origin_weight);
-  }
-#endif
 
   vector<int> res =
       add_off_tree_edges(M, tree_edges_size, new_tree, off_tree_edges_size,
