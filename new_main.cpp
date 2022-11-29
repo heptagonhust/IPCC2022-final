@@ -130,19 +130,12 @@ unique_ptr<int[]> get_unweighted_distance_bfs(const Edge *edges,
 void get_new_edges(const int &edge_cnt, Edge *edges, const int *deg,
                    const int *unweighted_distance) {
   ScopeTimer t_("get_new_edges");
-  if (edge_cnt > 400000) {
-    for (int i = 0; i < edge_cnt; ++i) {
-      edges[i].weight =
-          edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
-          (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
-    }
-  } else {
-    tbb::parallel_for(0, edge_cnt, [edges, deg, unweighted_distance](auto i) {
-      edges[i].weight =
-          edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
-          (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
-    });
-  }
+
+  tbb::parallel_for(0, edge_cnt, [edges, deg, unweighted_distance](auto i) {
+    edges[i].weight =
+        edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
+        (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
+  });
 }
 
 struct UnionFindSet {
@@ -509,8 +502,10 @@ int main(int argc, const char *argv[]) {
   assert(!(L & 1));
 
   unique_ptr<Edge[]> origin_edges(new Edge[L >> 1]);
-  unique_ptr<int[]> degree(new int[M + 1]());
-  unique_ptr<double[]> volume(new double[M + 1]());
+  unique_ptr<int[]> degree(new int[M + 1]);
+  unique_ptr<double[]> volume(new double[M + 1]);
+  oneapi::tbb::parallel_for(
+      0, M + 1, [&degree, &volume](auto i) { degree[i] = volume[i] = 0; });
   int edges_cnt = 0;
   for (int i = 0; i < L; ++i) {
     int f, t;
