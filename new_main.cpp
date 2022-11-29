@@ -579,7 +579,7 @@ int main(int argc, const char *argv[]) {
   /**************************************************/
   /******************* End timing *******************/
   /**************************************************/
-  FILE *out = fopen("result.ng.txt", "w");
+  FILE *out = fopen("result.txt", "w");
   for (int i = 0; i < tree_edges_size; i++) {
     fprintf(out, "%d %d\n", int(tree_edges[i].a), int(tree_edges[i].b));
   }
