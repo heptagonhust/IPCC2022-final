@@ -1,7 +1,6 @@
 #include "SPSCQueue.h"
 #include "timer.hpp"
 #include <algorithm>
-#include <boost/sort/sort.hpp>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
