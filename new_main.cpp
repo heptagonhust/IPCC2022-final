@@ -342,11 +342,11 @@ int beta_layer_bfs_1(int start, unique_ptr<QueueEntry[]> &q,
   return rear;
 }
 
-vector<int> beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
-                             const CSRMatrix<vec2> &tree,
-                             const CSRMatrix<vec2> &off_tree_graph,
-                             unique_ptr<bool[]> &black_list1, int beta) {
-  vector<int> res{};
+void beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
+                      const CSRMatrix<vec2> &tree,
+                      const CSRMatrix<vec2> &off_tree_graph,
+                      unique_ptr<bool[]> &black_list1, int beta,
+                      SPSCQueue<int> &spsc) {
   int rear = 0;
   q[rear++] = {start, 0, -1};
   for (int idx = 0; idx < rear; idx++) {
@@ -364,7 +364,7 @@ vector<int> beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
         // } else {
         //   banned_edges.insert({min(cur_node, v), max(cur_node, v)});
         // }
-        res.push_back(edge_idx);
+        spsc.push(edge_idx);
       }
     }
     if (cur_layer == beta) {
@@ -378,12 +378,12 @@ vector<int> beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
       }
     }
   }
-  return res;
+  spsc.push(-1);
 }
 
 const int num_producer = 16;
 
-void produce_ban_off_tree_edges(int thread_id, SPSCQueue<vector<int>> &spsc,
+void produce_ban_off_tree_edges(int thread_id, SPSCQueue<int> &spsc,
                                 int node_cnt, const CSRMatrix<vec2> &tree_graph,
                                 const CSRMatrix<vec2> &off_tree_graph,
                                 const int off_tree_edges_size,
@@ -397,14 +397,13 @@ void produce_ban_off_tree_edges(int thread_id, SPSCQueue<vector<int>> &spsc,
     auto &e = off_tree_edges[i];
 
     if (edge_is_banned[i]) {
-      spsc.push(vector<int>{});
+      spsc.push(-1);
       continue;
     }
     int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
     int size1 = beta_layer_bfs_1(e.a, q1, tree_graph, black_list1, beta);
-    auto ban_list = beta_layer_bfs_2(e.b, q2, tree_graph, off_tree_graph,
-                                     black_list1, beta);
-    spsc.push(std::move(ban_list));
+    beta_layer_bfs_2(e.b, q2, tree_graph, off_tree_graph, black_list1, beta,
+                     spsc);
 
     for (int j = 0; j < size1; j++) {
       black_list1[q1[j].node] = false;
@@ -428,7 +427,7 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
   vector<bool> edge_is_banned(off_tree_edges_size);
 
   std::thread threads[num_producer];
-  SPSCQueue<vector<int>> spscs[num_producer];
+  SPSCQueue<int> spscs[num_producer];
   atomic<bool> threads_done{false};
   for (int i = 0; i < num_producer; i++) {
     threads[i] = std::thread([&, i] {
@@ -460,23 +459,22 @@ vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
     bool is_banned = edge_is_banned[i];
 
     if (is_banned) {
-      spscs[i % num_producer].pop();
+      while (spscs[i % num_producer].pop_front() != -1)
+        ;
       continue;
     }
 
-    auto ban_list = spscs[i % num_producer].front();
-
     edges_to_be_add[edges_added_size++] = i;
-    for (const auto &edge_idx : *ban_list) {
+    int edge_idx = 0;
+    while ((edge_idx = spscs[i % num_producer].pop_front()) != -1) {
       edge_is_banned[edge_idx] = true;
     }
-    spscs[i % num_producer].pop();
   }
   magic_trace_stop_indicator();
   threads_done = true;
   t_.tick("consume data");
   for (auto &q : spscs) {
-    if (q.front() != nullptr)
+    while (q.front() != nullptr)
       q.pop();
   }
   for (int i = 0; i < num_producer; ++i) {

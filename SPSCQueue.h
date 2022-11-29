@@ -36,7 +36,7 @@ SOFTWARE.
 #define RIGTORP_NODISCARD
 #endif
 
-const int spsc_capacity = 1000;
+constexpr int spsc_capacity = 4096;
 
 namespace rigtorp {
 
@@ -190,6 +190,16 @@ public:
     readIdx_.store(nextReadIdx, std::memory_order_release);
   }
 
+  RIGTORP_NODISCARD T pop_front() noexcept {
+    static_assert(std::is_nothrow_destructible<T>::value,
+                  "T must be nothrow destructible");
+    while (!front())
+      ;
+    T res = *front();
+    pop();
+    return res;
+  }
+
   RIGTORP_NODISCARD size_t size() const noexcept {
     std::ptrdiff_t diff = writeIdx_.load(std::memory_order_acquire) -
                           readIdx_.load(std::memory_order_acquire);
@@ -215,7 +225,7 @@ private:
 #endif
 
   // Padding to avoid false sharing between slots_ and adjacent allocations
-  static constexpr size_t kPadding = (kCacheLineSize - 1) / sizeof(T) + 1;
+  static constexpr size_t kPadding = 0;
 
 private:
   size_t capacity_;
