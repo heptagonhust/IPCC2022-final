@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <execution>
 #include <fstream>
 #include <future>
 #include <immintrin.h>
@@ -15,6 +16,7 @@
 #include <memory>
 #include <oneapi/tbb.h>
 #include <oneapi/tbb/parallel_for.h>
+#include <pstl/glue_execution_defs.h>
 #include <queue>
 #include <stack>
 #include <string>
@@ -157,7 +159,7 @@ struct UnionFindSet {
 void kruskal(int node_cnt, int edge_cnt, Edge *edges, Edge *tree_edges,
              Edge *off_tree_edges) {
   ScopeTimer t_("kruskal");
-  boost::sort::parallel_stable_sort(edges, edges + edge_cnt);
+  stable_sort(execution::par_unseq, edges, edges + edge_cnt);
   t_.tick("sort edges");
   // tree_edges.reserve(node_cnt - 1);
   // off_tree_edges.reserve(edge_cnt - (node_cnt - 1));
@@ -298,7 +300,7 @@ void sort_off_tree_edges(int edges_cnt, Edge *edges, const double *depth) {
     printf("%d %d %lf %lf\n", x.a, x.b, x.weight, x.origin_weight);
   }
 #endif
-  boost::sort::parallel_stable_sort(edges, edges + edges_cnt);
+  stable_sort(execution::par_unseq, edges, edges + edges_cnt);
   t_.tick("sort edges");
 }
 
