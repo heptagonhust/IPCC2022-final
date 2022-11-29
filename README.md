@@ -2,7 +2,9 @@
 
 ## 环境构建
 我们选择使用自己编译的新版gcc，压缩包一并放在工作目录中
+
 编译前需要按照以下命令进行环境构建
+
 ```shell
 $ tar -xzvf ./gnu.tar.gz
 $ source ./env.sh
