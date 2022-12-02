@@ -1,28 +1,456 @@
-#include "Eigen/Dense"
-#include "Eigen/LU"
+#include "SPSCQueue.h"
+#include "timer.hpp"
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <execution>
 #include <fstream>
+#include <future>
+#include <immintrin.h>
 #include <iostream>
 #include <math.h>
+#include <memory>
+#include <oneapi/tbb.h>
+#include <oneapi/tbb/parallel_for.h>
+#include <pstl/glue_execution_defs.h>
 #include <queue>
 #include <stack>
 #include <string>
 #include <sys/time.h>
+#include <unordered_set>
 #include <vector>
-
-#define ROW 0
-#define COLUMN 1
-#define VALUE 2
-#define vertex1 0
-#define vertex2 1
-#define Weight 2
-
-using namespace Eigen;
 using namespace std;
+using namespace rigtorp;
 
-bool compare(const vector<double> &a, const vector<double> &b) {
-  return a[2] > b[2];
+// #define DEBUG
+struct Edge {
+  int a, b;
+  double weight, origin_weight;
+  int lca;
+  bool operator<(const Edge &rhs) const { return this->weight > rhs.weight; }
+};
+
+template <typename T> struct CSRMatrix {
+  std::unique_ptr<int[]> row_indices;
+  std::unique_ptr<T[]> elems;
+
+  CSRMatrix(const int &matrix_dim, const int &nonzero_count)
+      : row_indices(new int[matrix_dim + 1]), elems(new T[nonzero_count]) {}
+};
+
+using vec2 = pair<int, int>;
+
+enum class CSRValueType {
+  index,
+  neighbor,
+  neighbor_and_index,
+};
+
+template <CSRValueType value_type = CSRValueType::index, class T = int>
+CSRMatrix<T> build_csr_matrix(const int &node_cnt, const int &edge_cnt,
+                              const Edge *edges) {
+  vector<int> deg(node_cnt + 1);
+  for (int i = 0; i < edge_cnt; ++i) {
+    deg[edges[i].a]++;
+    deg[edges[i].b]++;
+  }
+  auto mat = CSRMatrix<T>(node_cnt + 1, edge_cnt * 2);
+  int start_idx = 0;
+  for (int i = 1; i <= node_cnt; i++) {
+    mat.row_indices[i] = start_idx;
+    start_idx += deg[i];
+  }
+  mat.row_indices[0] = 0;
+  mat.row_indices[node_cnt + 1] = start_idx;
+  for (int i = 0; i < edge_cnt; ++i) {
+    const auto &e = edges[i];
+    if constexpr (value_type == CSRValueType::index) {
+      mat.elems[mat.row_indices[e.a]] = T{i};
+      mat.elems[mat.row_indices[e.b]] = T{i};
+    } else if constexpr (value_type == CSRValueType::neighbor) {
+      mat.elems[mat.row_indices[e.a]] = T{e.b};
+      mat.elems[mat.row_indices[e.b]] = T{e.a};
+    } else {
+      mat.elems[mat.row_indices[e.a]] = T{e.b, i};
+      mat.elems[mat.row_indices[e.b]] = T{e.a, i};
+    }
+    mat.row_indices[e.a]++;
+    mat.row_indices[e.b]++;
+  }
+  for (int i = node_cnt; i >= 1; i--) {
+    mat.row_indices[i] = mat.row_indices[i - 1];
+  }
+  return mat;
+}
+
+int largest_volume_node(const int &node_cnt, const double *volume) {
+  ScopeTimer t_("largest_volume_node");
+  double max_volume = 0.0;
+  int max_index = 0;
+  for (int i = 1; i <= node_cnt; i++) {
+    if (volume[i] > max_volume) {
+      max_index = i;
+      max_volume = volume[i];
+    }
+  }
+
+  return max_index;
+}
+
+unique_ptr<int[]> get_unweighted_distance_bfs(const Edge *edges,
+                                              const CSRMatrix<vec2> &G,
+                                              int start, int node_cnt) {
+  ScopeTimer t_("get_unweighted_distance_bfs");
+  unique_ptr<int[]> res(new int[node_cnt + 1]{});
+  vector<bool> vis(node_cnt + 1);
+  vis[start] = 1;
+  queue<int> q;
+  q.push(start);
+  while (!q.empty()) {
+    int top = q.front();
+    q.pop();
+    for (int i = G.row_indices[top]; i < G.row_indices[top + 1]; ++i) {
+      int v = G.elems[i].first;
+      if (!vis[v]) {
+        res[v] = res[top] + 1;
+        q.push(v);
+        vis[v] = 1;
+      }
+    }
+  }
+  return res;
+}
+
+void get_new_edges(const int &edge_cnt, Edge *edges, const int *deg,
+                   const int *unweighted_distance) {
+  ScopeTimer t_("get_new_edges");
+
+  tbb::parallel_for(0, edge_cnt, [edges, deg, unweighted_distance](auto i) {
+    edges[i].weight =
+        edges[i].weight * log(1.0 * max(deg[edges[i].a], deg[edges[i].b])) /
+        (unweighted_distance[edges[i].a] + unweighted_distance[edges[i].b]);
+  });
+}
+
+struct UnionFindSet {
+  unique_ptr<int[]> fa;
+  UnionFindSet(size_t sz) : fa(new int[sz]) {
+    for (int i = 0; i < sz; ++i) {
+      fa[i] = i;
+    }
+  }
+  int find_fa(int x) {
+    if (x != fa[x]) // x 不是自身的父亲，即 x 不是该集合的代表
+      fa[x] = find_fa(fa[x]); // 查找 x 的祖先直到找到代表，于是顺手路径压缩
+    return fa[x];
+  }
+
+  void merge(int a, int b) { fa[fa[a]] = fa[b]; }
+};
+
+void kruskal(int node_cnt, int edge_cnt, Edge *edges, Edge *tree_edges,
+             Edge *off_tree_edges) {
+  ScopeTimer t_("kruskal");
+  stable_sort(execution::par_unseq, edges, edges + edge_cnt);
+  t_.tick("sort edges");
+  UnionFindSet ufs(node_cnt + 1);
+  int edge_index = 0, tree_edges_size = 0, off_tree_edges_size = 0;
+  for (; tree_edges_size != node_cnt - 1; ++edge_index) {
+    auto edge = edges[edge_index];
+    if (ufs.find_fa(edge.a) != ufs.find_fa(edge.b)) {
+      ufs.merge(edge.a, edge.b);
+      tree_edges[tree_edges_size++] = edge;
+    } else {
+      off_tree_edges[off_tree_edges_size++] = edge;
+    }
+  }
+  t_.tick("collect mst edges");
+  for (int i = edge_index, j = off_tree_edges_size; i < edge_cnt; ++i, ++j) {
+    off_tree_edges[j] = edges[i];
+  }
+  t_.tick("copy off tree edges");
+}
+
+CSRMatrix<vec2> rebuild_tree(int node_cnt, int edge_cnt, const Edge *tree) {
+  ScopeTimer t_("rebuild_tree");
+  return build_csr_matrix</* use_edge_list */ CSRValueType::neighbor_and_index,
+                          vec2>(node_cnt, edge_cnt, tree);
+}
+
+void euler_tour(const CSRMatrix<vec2> &tree, Edge *tree_edges, int cur, int fa,
+                int &dfn, double *weighted_depth, int *unweighted_depth,
+                int *euler_series, int *pos) {
+  euler_series[dfn++] = cur;
+  pos[cur] = dfn - 1;
+  for (int i = tree.row_indices[cur]; i < tree.row_indices[cur + 1]; ++i) {
+    const Edge &e = tree_edges[tree.elems[i].second];
+    int v = tree.elems[i].first;
+    if (v != fa) {
+      weighted_depth[v] = 1.0 / e.origin_weight + weighted_depth[cur];
+      unweighted_depth[v] = 1 + unweighted_depth[cur];
+      euler_tour(tree, tree_edges, v, cur, dfn, weighted_depth,
+                 unweighted_depth, euler_series, pos);
+      euler_series[dfn++] = cur;
+    }
+  }
+}
+
+constexpr int ilog2(int x) {
+  return (
+      (unsigned)(8 * sizeof(unsigned long long) - __builtin_clzll((x)) - 1));
+}
+
+void rmq_lca(const CSRMatrix<vec2> &tree, Edge *tree_edges, int query_size,
+             Edge *query_info, int root, int node_cnt, double *weighted_depth,
+             int *unweighted_depth) {
+  ScopeTimer t_("rmq_lca");
+  const int euler_series_len = 2 * node_cnt - 1;
+  std::unique_ptr<int[]> euler_series(new int[euler_series_len]);
+  std::unique_ptr<int[]> pos(new int[node_cnt + 1]);
+  int dfn = 0;
+  euler_tour(tree, tree_edges, root, root, dfn, weighted_depth,
+             unweighted_depth, euler_series.get(), pos.get());
+  t_.tick("euler tour");
+  const int block_size = sqrt(euler_series_len);
+  const int block_count = (euler_series_len + block_size - 1) / block_size;
+  std::unique_ptr<int[]> prefix_min_per_block(new int[euler_series_len]);
+  std::unique_ptr<int[]> postfix_min_per_block(new int[euler_series_len]);
+  std::unique_ptr<int[]> min_per_block(new int[block_count]);
+  std::unique_ptr<int[]> contiguous_block_min(
+      new int[block_count * (block_count + 1) / 2]);
+  const auto idx_map = [&block_count](int i, int j) {
+    const int col_idx = j - i;
+    const int res = (block_count + block_count - i + 1) * i / 2 + col_idx;
+    return res;
+  };
+  t_.tick("vec init");
+  for (int i = 0; i < block_count; ++i) {
+    const int block_start = block_size * i;
+    const int block_end = min(block_start + block_size, euler_series_len);
+    prefix_min_per_block[block_start] = pos[euler_series[block_start]];
+    for (int j = block_start + 1; j < block_end; ++j) {
+      prefix_min_per_block[j] =
+          min(pos[euler_series[j]], prefix_min_per_block[j - 1]);
+    }
+    postfix_min_per_block[block_end - 1] = pos[euler_series[block_end - 1]];
+    for (int j = block_end - 1; j > block_start; --j) {
+      postfix_min_per_block[j - 1] =
+          min(pos[euler_series[j - 1]], postfix_min_per_block[j]);
+    }
+    min_per_block[i] = postfix_min_per_block[block_start];
+  }
+  for (int i = 0; i < block_count; ++i) {
+    contiguous_block_min[idx_map(i, i)] = min_per_block[i];
+    for (int j = i + 1; j < block_count; ++j) {
+      contiguous_block_min[idx_map(i, j)] =
+          min(min_per_block[j], contiguous_block_min[idx_map(i, j - 1)]);
+    }
+  }
+  t_.tick("lca preprocess");
+  tbb::parallel_for(
+      0, query_size,
+      [query_info, &pos, block_size, euler_series_len, &euler_series,
+       &postfix_min_per_block, &prefix_min_per_block, &contiguous_block_min,
+       idx_map](auto i) {
+        Edge &e = query_info[i];
+        const int l = min(pos[e.a], pos[e.b]);
+        const int r = max(pos[e.a], pos[e.b]);
+        const int l_block = l / block_size;
+        const int r_block = r / block_size;
+        int lca_pos = euler_series_len;
+        if (l_block == r_block) {
+          for (int j = l; j <= r; ++j) {
+            if (pos[euler_series[j]] < lca_pos) {
+              lca_pos = pos[euler_series[j]];
+            }
+          }
+        } else if (l_block + 1 == r_block) {
+          lca_pos = min(postfix_min_per_block[l], prefix_min_per_block[r]);
+        } else {
+          lca_pos = min(contiguous_block_min[idx_map(l_block + 1, r_block - 1)],
+                        min(postfix_min_per_block[l], prefix_min_per_block[r]));
+        }
+        const int lca = euler_series[lca_pos];
+        e.lca = lca;
+      });
+  t_.tick("lca query");
+}
+
+void sort_off_tree_edges(int edges_cnt, Edge *edges, const double *depth) {
+  ScopeTimer t_("sort_off_tree_edges");
+  tbb::parallel_for(0, edges_cnt, [edges, depth](auto i) {
+    auto &e = edges[i];
+    e.weight = e.origin_weight * (depth[e.a] + depth[e.b] - 2 * depth[e.lca]);
+  });
+  t_.tick("map edges weight");
+  stable_sort(execution::par_unseq, edges, edges + edges_cnt);
+  t_.tick("sort edges");
+}
+
+void mark_ban_edges(vector<bool> &ban, const vector<int> &ban_edges) {
+  for (auto &x : ban_edges) {
+    ban[x] = true;
+  }
+}
+struct QueueEntry {
+  int node, layer, predecessor;
+};
+
+int beta_layer_bfs_1(int start, unique_ptr<QueueEntry[]> &q,
+                     const CSRMatrix<vec2> &tree,
+                     unique_ptr<bool[]> &black_list1, int beta) {
+  int rear = 0;
+  q[rear++] = {start, 0, -1};
+  for (int idx = 0; idx < rear; idx++) {
+    int cur_node = q[idx].node;
+    int cur_layer = q[idx].layer;
+    int cur_pre = q[idx].predecessor;
+    black_list1[cur_node] = true;
+    if (cur_layer == beta) {
+      continue;
+    }
+    for (int j = tree.row_indices[cur_node]; j < tree.row_indices[cur_node + 1];
+         ++j) {
+      int v = tree.elems[j].first;
+      if (cur_pre != v) {
+        q[rear++] = {v, cur_layer + 1, cur_node};
+      }
+    }
+  }
+  return rear;
+}
+
+void beta_layer_bfs_2(int start, unique_ptr<QueueEntry[]> &q,
+                      const CSRMatrix<vec2> &tree,
+                      const CSRMatrix<vec2> &off_tree_graph,
+                      unique_ptr<bool[]> &black_list1, int beta,
+                      SPSCQueue<int> &spsc) {
+  int rear = 0;
+  q[rear++] = {start, 0, -1};
+  for (int idx = 0; idx < rear; idx++) {
+    int cur_node = q[idx].node;
+    int cur_layer = q[idx].layer;
+    int cur_pre = q[idx].predecessor;
+    for (int j = off_tree_graph.row_indices[cur_node];
+         j < off_tree_graph.row_indices[cur_node + 1]; ++j) {
+      int v = off_tree_graph.elems[j].first;
+      int edge_idx = off_tree_graph.elems[j].second;
+      if (black_list1[v]) {
+        spsc.push(edge_idx);
+      }
+    }
+    if (cur_layer == beta) {
+      continue;
+    }
+    for (int j = tree.row_indices[cur_node]; j < tree.row_indices[cur_node + 1];
+         ++j) {
+      int v = tree.elems[j].first;
+      if (v != cur_pre) {
+        q[rear++] = {v, cur_layer + 1, cur_node};
+      }
+    }
+  }
+  spsc.push(-1);
+}
+
+const int num_producer = 16;
+
+void produce_ban_off_tree_edges(int thread_id, SPSCQueue<int> &spsc,
+                                int node_cnt, const CSRMatrix<vec2> &tree_graph,
+                                const CSRMatrix<vec2> &off_tree_graph,
+                                const int off_tree_edges_size,
+                                const Edge *off_tree_edges, const int *depth,
+                                const atomic<bool> &done,
+                                const vector<bool> &edge_is_banned) {
+  unique_ptr<QueueEntry[]> q1(new QueueEntry[node_cnt]);
+  unique_ptr<QueueEntry[]> q2(new QueueEntry[node_cnt]);
+  unique_ptr<bool[]> black_list1(new bool[node_cnt + 1]());
+  for (int i = thread_id; i < off_tree_edges_size && !done; i += num_producer) {
+    auto &e = off_tree_edges[i];
+
+    if (edge_is_banned[i]) {
+      spsc.push(-1);
+      continue;
+    }
+    int beta = min(depth[e.a], depth[e.b]) - depth[e.lca];
+    int size1 = beta_layer_bfs_1(e.a, q1, tree_graph, black_list1, beta);
+    beta_layer_bfs_2(e.b, q2, tree_graph, off_tree_graph, black_list1, beta,
+                     spsc);
+
+    for (int j = 0; j < size1; j++) {
+      black_list1[q1[j].node] = false;
+    }
+  }
+}
+
+vector<int> add_off_tree_edges(const int node_cnt, const int tree_edges_size,
+                               const CSRMatrix<vec2> &tree_graph,
+                               const int off_tree_edges_size,
+                               const Edge *off_tree_edges, const int *depth) {
+
+  ScopeTimer t_("add_off_tree_edges");
+  auto off_tree_graph =
+      build_csr_matrix<CSRValueType::neighbor_and_index, vec2>(
+          node_cnt, off_tree_edges_size, off_tree_edges);
+  t_.tick("build graph");
+  int alpha = max(int(off_tree_edges_size / 25), 2);
+
+  vector<int> edges_to_be_add(alpha);
+  vector<bool> edge_is_banned(off_tree_edges_size);
+
+  std::thread threads[num_producer];
+  SPSCQueue<int> spscs[num_producer];
+  atomic<bool> threads_done{false};
+  for (int i = 0; i < num_producer; i++) {
+    threads[i] = std::thread([&, i] {
+      produce_ban_off_tree_edges(i, spscs[i], node_cnt, tree_graph,
+                                 off_tree_graph, off_tree_edges_size,
+                                 off_tree_edges, depth, threads_done,
+                                 edge_is_banned);
+    });
+  }
+  t_.tick("launch threads");
+
+  int edges_added_size = 0;
+  for (int i = 0; i < off_tree_edges_size; ++i) {
+    if (edges_added_size == alpha) {
+      break;
+    }
+    auto &e = off_tree_edges[i];
+
+    while (!spscs[i % num_producer].front()) {
+      _mm_pause();
+    }
+
+    bool is_banned = edge_is_banned[i];
+
+    if (is_banned) {
+      while (spscs[i % num_producer].pop_front() != -1)
+        ;
+      continue;
+    }
+
+    edges_to_be_add[edges_added_size++] = i;
+    int edge_idx = 0;
+    while ((edge_idx = spscs[i % num_producer].pop_front()) != -1) {
+      edge_is_banned[edge_idx] = true;
+    }
+  }
+  threads_done = true;
+  t_.tick("consume data");
+  for (auto &q : spscs) {
+    while (q.front() != nullptr)
+      q.pop();
+  }
+  for (int i = 0; i < num_producer; ++i) {
+    threads[i].join();
+  }
+  t_.tick("join threads");
+  edges_to_be_add.resize(edges_added_size);
+  return edges_to_be_add;
 }
 
 int main(int argc, const char *argv[]) {
@@ -42,411 +470,80 @@ int main(int argc, const char *argv[]) {
     fin.ignore(2048, '\n');
   // declare matrix vector, volume and degree
   fin >> M >> N >> L;
-  double volume[M + 1]; // volume of every point
-  double degree[M + 1]; // degree of every point
-  degree[0] = 0;
-  volume[0] = 0;
-  vector<double> triple;                  // element
-  vector<vector<double>> triple1;         // elements in the same column
-  vector<vector<vector<double>>> triple2; // the whole matrix
+  // M == N, point cnt
+  // L, edge cnt
+  assert(!(L & 1));
 
-  // fill matrix vector and calculate the degree and volume of every point
-  int column = 1;
-  int m, n = 0;
-  double data = 0;
-  int n1 = 1;
+  unique_ptr<Edge[]> origin_edges(new Edge[L >> 1]);
+  unique_ptr<int[]> degree(new int[M + 1]);
+  unique_ptr<double[]> volume(new double[M + 1]);
+  oneapi::tbb::parallel_for(
+      0, M + 1, [&degree, &volume](auto i) { degree[i] = volume[i] = 0; });
+  int edges_cnt = 0;
   for (int i = 0; i < L; ++i) {
-    fin >> m >> n >> data;
-    // check wether change the column
-    if (n1 != n) {
-      column++;
-      // initialization
-      volume[column] = 0;
-      degree[column] = 0;
-      n1 = n;
-      triple2.push_back(triple1);
-      // clear up the triple1
-      triple1.erase(triple1.begin(), triple1.end());
+    int f, t;
+    double w;
+    fin >> f >> t >> w;
+    if (f > t) {
+      continue;
     }
-    volume[column] = volume[column] + data;
-    degree[column] = degree[column] + 1;
-    triple.push_back(m);
-    triple.push_back(n);
-    triple.push_back(data);
-    triple1.push_back(triple);
-    triple.erase(triple.begin(), triple.end());
+    volume[f] += w;
+    volume[t] += w;
+    degree[f]++;
+    degree[t]++;
+    origin_edges[edges_cnt++] = Edge{f, t, w, w};
   }
+  auto G = build_csr_matrix<CSRValueType::neighbor_and_index, vec2>(
+      M, edges_cnt, origin_edges.get());
   fin.close();
-  triple2.push_back(triple1);
-  // free the memory of triple1
-  vector<vector<double>>().swap(triple1);
-
+  printf("edge_cnt: %d\n", edges_cnt);
   /**************************************************/
   /***************** Start timing *******************/
   /**************************************************/
+  oneapi::tbb::global_control global_limit(
+      oneapi::tbb::global_control::max_allowed_parallelism, 32);
   struct timeval start, end;
   gettimeofday(&start, NULL);
+  int r_node = largest_volume_node(M, volume.get());
+  auto unweighted_distance =
+      get_unweighted_distance_bfs(origin_edges.get(), G, r_node, M);
+  get_new_edges(edges_cnt, origin_edges.get(), degree.get(),
+                unweighted_distance.get());
 
-  // find the point that has the largest volume
-  int largest_volume_point = 0;
-  double largest_volume = 0;
-  for (int i = 1; i <= M; i++) {
-    if (volume[i] > largest_volume) {
-      largest_volume_point = i;
-      largest_volume = volume[i];
-    }
-  }
+  auto new_edges = std::move(origin_edges);
 
-  // run bfs to get the no-weight distance between normal point with the
-  // largest-volume point
-  int no_weight_distance[M + 1]; // no-weight-distance between largest-volume
-                                 // point and normal point
-  for (int i = 0; i < M + 1; i++) {
-    no_weight_distance[i] = 0;
-  }
-  queue<int> process; // to show the process of bfs
-  // run bfs and calculate the no-weight distance
-  int distance = 1;
-  int point;
-  process.push(largest_volume_point);
-  // use 0 to cut the layer
-  process.push(0);
-  no_weight_distance[largest_volume_point] = -1;
-  while (process.size() != 1 || process.front() != 0) {
-    point = process.front();
-    process.pop();
-    // set zero to cut near layers
-    if (point == 0) {
-      process.push(0);
-      distance++;
-      continue;
-    }
-    for (int i = 0; i < triple2[point - 1].size(); i++) {
-      if (no_weight_distance[int(triple2[point - 1][i][ROW])] == 0) {
-        process.push(int(triple2[point - 1][i][ROW]));
-        no_weight_distance[int(triple2[point - 1][i][ROW])] = distance;
-      }
-    }
-  }
-  no_weight_distance[largest_volume_point] = 0;
-  // free the memory
-  queue<int>().swap(process);
+  const int tree_edges_size = M - 1;
+  const int off_tree_edges_size = edges_cnt - tree_edges_size;
+  unique_ptr<Edge[]> tree_edges(new Edge[tree_edges_size]),
+      off_tree_edges(new Edge[off_tree_edges_size]);
+  kruskal(M, edges_cnt, new_edges.get(), tree_edges.get(),
+          off_tree_edges.get());
 
-  // construct the edge-weight matrix
-  vector<double> edge;
-  vector<vector<double>> edge_matrix; // to run the krascal
-  for (int i = 0; i < triple2.size(); i++) {
-    for (int j = 0; j < triple2[i].size(); j++) {
-      if (triple2[i][j][COLUMN] <= triple2[i][j][ROW]) {
-        break;
-      }
-      edge.push_back(triple2[i][j][ROW]);
-      edge.push_back(triple2[i][j][COLUMN]);
-      // push effect valuable into vector
-      double a = degree[int(edge[0])];
-      double b = degree[int(edge[1])];
-      double c = a >= b ? a : b;
-      double d = triple2[i][j][VALUE];
-      double e = no_weight_distance[int(edge[0])];
-      double f = no_weight_distance[int(edge[1])];
-      double g = d * log(c) / (f + e);
-      edge.push_back(g);
-      edge.push_back(d);
-      edge_matrix.push_back(edge);
-      edge.erase(edge.begin(), edge.end());
-    }
-  }
+  auto new_tree = rebuild_tree(M, tree_edges_size, tree_edges.get());
+  unique_ptr<double[]> tree_weighted_depth(new double[M + 1]);
+  unique_ptr<int[]> tree_unweighted_depth(new int[M + 1]);
+  rmq_lca(new_tree, tree_edges.get(), off_tree_edges_size, off_tree_edges.get(),
+          r_node, M, tree_weighted_depth.get(), tree_unweighted_depth.get());
 
-  // sort according to the weight of each edge
-  stable_sort(edge_matrix.begin(), edge_matrix.end(), compare);
+  sort_off_tree_edges(off_tree_edges_size, off_tree_edges.get(),
+                      tree_weighted_depth.get());
 
-  // run kruscal to get largest-effect-weight spanning tree
-  int assistance[int(edge_matrix.size()) +
-                 1]; // check wether some points construct the circle
-  for (int i = 0; i <= edge_matrix.size(); i++) {
-    assistance[i] = i;
-  }
-  int k = 0; // show how many trees have been add into
-  vector<vector<double>> spanning_tree; // spanning tree
-  int tmin;
-  int tmax;
-  // kruscal
-  for (int i = 0; i < edge_matrix.size(); i++) {
-    if (assistance[int(edge_matrix[i][0])] !=
-        assistance[int(edge_matrix[i][1])]) {
-      k++;
-      spanning_tree.push_back(edge_matrix[i]);
-      tmin = assistance[int(edge_matrix[i][0])] >=
-                     assistance[int(edge_matrix[i][1])]
-                 ? assistance[int(edge_matrix[i][1])]
-                 : assistance[int(edge_matrix[i][0])];
-      tmax = assistance[int(edge_matrix[i][0])] <
-                     assistance[int(edge_matrix[i][1])]
-                 ? assistance[int(edge_matrix[i][1])]
-                 : assistance[int(edge_matrix[i][0])];
-      for (int j = 1; j <= int(edge_matrix.size()); j++) {
-        if (assistance[j] == tmin) {
-          assistance[j] = tmax;
-        }
-      }
-    }
-    if (k == M - 1) {
-      break;
-    }
-  }
-
-  // construct the off-tree edge
-  vector<vector<double>> off_tree_edge;
-  int inside = 0; // To show which trees are in the spanning tree
-  for (int i = 0; i < edge_matrix.size(); i++) {
-    if (edge_matrix[i][0] == spanning_tree[inside][0] &&
-        edge_matrix[i][1] == spanning_tree[inside][1]) {
-      inside++;
-      // to avoid inside crossing the border of spanning_tree
-      if (inside == spanning_tree.size()) {
-        inside--;
-      }
-      continue;
-    }
-    off_tree_edge.push_back(edge_matrix[i]);
-  }
-  vector<vector<double>>().swap(edge_matrix);
-
-  // attain the Laplace matrix of spanning tree
-  // restore in SparseMatrix of Eigen
-  // that can get inverse matrix by LU decompose
-
-  // construct the Laplace matrix of spanning tree
-  MatrixXd LG = Eigen::MatrixXd::Zero(M, N);
-  for (int i = 0; i < spanning_tree.size(); i++) {
-    LG(int(spanning_tree[i][0]) - 1, int(spanning_tree[i][1]) - 1) =
-        -spanning_tree[i][3];
-    LG(int(spanning_tree[i][1]) - 1, int(spanning_tree[i][0]) - 1) =
-        -spanning_tree[i][3];
-    LG(int(spanning_tree[i][1]) - 1, int(spanning_tree[i][1]) - 1) +=
-        spanning_tree[i][3];
-    LG(int(spanning_tree[i][0]) - 1, int(spanning_tree[i][0]) - 1) +=
-        spanning_tree[i][3];
-  }
-  MatrixXd pseudo_inverse_LG = (LG.transpose() * LG).inverse() * LG.transpose();
-
-  // calculate the resistance of each off_tree edge
-  vector<vector<double>> copy_off_tree_edge; // to resore the effect resistance
-  edge.erase(edge.begin(), edge.end());
-  for (int i = 0; i < off_tree_edge.size(); i++) {
-    edge.push_back(off_tree_edge[i][0]);
-    edge.push_back(off_tree_edge[i][1]);
-    double a = pseudo_inverse_LG(int(edge[0]) - 1, int(edge[0]) - 1);
-    double b = pseudo_inverse_LG(int(edge[1]) - 1, int(edge[1]) - 1);
-    double c = pseudo_inverse_LG(int(edge[1]) - 1, int(edge[0]) - 1);
-    double d = pseudo_inverse_LG(int(edge[0]) - 1, int(edge[1]) - 1);
-    edge.push_back(a + b - c - d);
-    edge.push_back(off_tree_edge[i][3]);
-    copy_off_tree_edge.push_back(edge);
-    edge.erase(edge.begin(), edge.end());
-  }
-
-  // sort by effect resistance
-  vector<vector<double>>().swap(off_tree_edge);
-  stable_sort(copy_off_tree_edge.begin(), copy_off_tree_edge.end(), compare);
-
-  for (int i = 0; i < M; i++) {
-    if (i > 30) {
-      break;
-    }
-    for (int j = 0; j < N; j++) {
-      if (j > 30) {
-        break;
-      }
-      cout << LG(i, j) << ' ';
-    }
-    cout << endl;
-  }
-  // add some edge into spanning tree
-  int num_additive_tree = 0;
-  int similarity_tree[copy_off_tree_edge.size()]; // check whether a edge is
-                                                  // similar to the edge added
-                                                  // before
-  for (int i = 0; i < copy_off_tree_edge.size(); i++) {
-    similarity_tree[i] = 0;
-  }
-  for (int i = 0; i < copy_off_tree_edge.size(); i++) {
-    // if there has enough off-tree edge added into spanning tree, the work has
-    // been finished
-    if (num_additive_tree == max(int(copy_off_tree_edge.size() / 25), 2)) {
-      break;
-    }
-    // if adge is not the similar tree,you can add it into spanning tree
-    if (similarity_tree[i] == 0) {
-      num_additive_tree++;
-      /**** Iteration Log. Yuo delete the printf call. ****/
-      if ((num_additive_tree % 64) == 0) {
-        printf("num_additive_tree : %d\n", num_additive_tree);
-      }
-      spanning_tree.push_back(copy_off_tree_edge[i]);
-      // run tarjhan algorithm to get the upper bound
-      stack<int> process;       // to show the process of dfs
-      int mark[M + 1];          // to show whether a point has been gone through
-      int find[M + 1];          // Joint search set
-      int position_node[M + 1]; // restore the child point in the dfs at the
-                                // time
-      for (int j = 0; j < M + 1; j++) {
-        mark[j] = 0;
-        find[j] = j;
-        position_node[j] = 1;
-      }
-      process.push(
-          largest_volume_point); // choose largest-volume point as root point
-      mark[largest_volume_point] = 1;
-
-      // stop the search when the vertexes of edge have been found
-      while (mark[int(copy_off_tree_edge[i][0])] == 0 ||
-             mark[int(copy_off_tree_edge[i][1])] == 0) {
-        for (int k = position_node[process.top()] - 1; k < N; k++) {
-          if (LG((process.top()) - 1, k) != 0 && mark[k + 1] != 1 &&
-              k != (process.top()) - 1) {
-            position_node[process.top()] = k + 1;
-            mark[k + 1] = 1;
-            process.push(k + 1);
-            break;
-          } else if (k == N - 1) {
-            int a = process.top();
-            process.pop();
-            find[a] = process.top();
-          }
-        }
-      }
-      // get the first point we found in dfs
-      int node = process.top();
-      if (node == copy_off_tree_edge[i][0]) {
-        node = copy_off_tree_edge[i][1];
-      } else {
-        node = copy_off_tree_edge[i][0];
-      }
-
-      // attain the no-weight distance between the first point that we found and
-      // LCA
-      int d1 = 0;
-      while (true) {
-        node = find[node];
-        d1++;
-        if (find[node] == node) {
-          break;
-        }
-      }
-
-      // attain the no-weight distance between the second point and LCA
-      int d2 = 1;
-      while (true) {
-        process.pop();
-        if (process.top() == node) {
-          break;
-        }
-        d2++;
-      }
-
-      // compare between two nodes to get the lower one to limit the upper bound
-      // of bfs
-      int belta = d1 >= d2 ? d2 : d1;
-
-      // choose two nodes as root node respectively to run belta bfs
-      vector<int> bfs_process1;
-      bfs_process1.push_back(copy_off_tree_edge[i][0]);
-      // use zero to cut the near layer
-      bfs_process1.push_back(0);
-      int mark1[M + 1];
-      for (int j = 0; j < M + 1; j++) {
-        mark1[j] = 0;
-      }
-      mark1[int(copy_off_tree_edge[i][0])] = 1;
-      int laywer = 0;
-      for (int j = 0; j < M; j++) {
-        if (laywer == belta) {
-          break;
-        }
-        if (bfs_process1[j] == 0) {
-          bfs_process1.push_back(0);
-          laywer++;
-        } else {
-          for (int x = 0; x < M; x++) {
-            if (LG(bfs_process1[j] - 1, x) == 0) {
-              continue;
-            } else if (mark1[x + 1] == 0 && x + 1 != bfs_process1[j] &&
-                       x + 1 != copy_off_tree_edge[i][0]) {
-              bfs_process1.push_back(x + 1);
-              mark1[x + 1] = 1;
-            }
-          }
-        }
-      }
-
-      vector<int> bfs_process2;
-      bfs_process2.push_back(copy_off_tree_edge[i][1]);
-      // use zero to cut the near layer
-      bfs_process2.push_back(0);
-      int mark2[M + 1];
-      for (int j = 0; j < M + 1; j++) {
-        mark2[j] = 0;
-      }
-      mark2[int(copy_off_tree_edge[i][1])] = 1;
-      laywer = 0;
-      for (int j = 0; j < M; j++) {
-        if (laywer == belta) {
-          break;
-        }
-        if (bfs_process2[j] == 0) {
-          bfs_process2.push_back(0);
-          laywer++;
-        } else {
-          for (int x = 0; x < M; x++) {
-            if (LG(bfs_process2[j] - 1, x) == 0) {
-              continue;
-            } else if (mark2[x + 1] == 0 && x + 1 != bfs_process2[j] &&
-                       x + 1 != copy_off_tree_edge[i][1]) {
-              bfs_process2.push_back(x + 1);
-              mark2[x + 1] = 1;
-            }
-          }
-        }
-      }
-
-      // mark the edge that is similar to the edge which wants to be added
-      for (int j = 0; j < bfs_process1.size(); j++) {
-        if (bfs_process1[j] == 0) {
-          continue;
-        }
-        for (int k = 0; k < bfs_process2.size(); k++) {
-          if (bfs_process2[k] == 0) {
-            continue;
-          }
-          if (bfs_process1[j] == bfs_process2[k]) {
-            continue;
-          }
-          for (int z = i; z < copy_off_tree_edge.size(); z++) {
-            if (copy_off_tree_edge[z][0] == bfs_process1[j] &&
-                copy_off_tree_edge[z][1] == bfs_process2[k]) {
-              similarity_tree[z] = 1;
-            } else if (copy_off_tree_edge[z][0] == bfs_process2[k] &&
-                       copy_off_tree_edge[z][1] == bfs_process1[j]) {
-              similarity_tree[z] = 1;
-            }
-          }
-        }
-      }
-    }
-  }
-
+  vector<int> res =
+      add_off_tree_edges(M, tree_edges_size, new_tree, off_tree_edges_size,
+                         off_tree_edges.get(), tree_unweighted_depth.get());
   gettimeofday(&end, NULL);
   printf("Using time : %f ms\n", (end.tv_sec - start.tv_sec) * 1000 +
                                      (end.tv_usec - start.tv_usec) / 1000.0);
   /**************************************************/
   /******************* End timing *******************/
   /**************************************************/
-
   FILE *out = fopen("result.txt", "w");
-  for (int i = 0; i < spanning_tree.size(); i++) {
-    fprintf(out, "%d %d\n", int(spanning_tree[i][0]), int(spanning_tree[i][1]));
+  for (int i = 0; i < tree_edges_size; i++) {
+    fprintf(out, "%d %d\n", int(tree_edges[i].a), int(tree_edges[i].b));
+  }
+  for (int i = 0; i < res.size(); i++) {
+    fprintf(out, "%d %d\n", int(off_tree_edges[res[i]].a),
+            int(off_tree_edges[res[i]].b));
   }
   fclose(out);
-  return 0;
 }
